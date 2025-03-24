@@ -1,7 +1,3 @@
-output "ecs_cluster_name" {
-  value = aws_ecs_cluster.my_cluster.name
-}
-
 # Output subnet IDs for debugging
 output "subnet_ids" {
   value = data.aws_subnets.existing_subnets.ids
