@@ -1,0 +1,9 @@
+[
+  {
+    "name": "my-app",
+    "image": "626635421987.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:v13",
+    "memory": "512",
+    "cpu": "256",
+    "essential": true
+  }
+]
