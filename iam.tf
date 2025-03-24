@@ -61,7 +61,7 @@ resource "aws_iam_role_policy" "cloudwatch_logs_access" {
           "logs:CreateLogGroup",
           "logs:CreateLogStream",
           "logs:PutLogEvents",
-          "logs:DescribeLogStreams" # Optional, if needed
+          "logs:DescribeLogStreams"
         ]
         Resource = "*"
       }
@@ -269,7 +269,10 @@ resource "aws_iam_role_policy" "grafana_cloudwatch_policy" {
         Action = [
           "cloudwatch:ListMetrics",
           "cloudwatch:GetMetricData",
-          "cloudwatch:GetMetricStatistics"
+          "cloudwatch:GetMetricStatistics",
+          "cloudwatch:DescribeAlarms",
+          "cloudwatch:GetDashboard",
+          "cloudwatch:ListDashboards"
         ]
         Resource = "*"
       }
@@ -292,7 +295,32 @@ resource "aws_iam_role_policy" "grafana_logs_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents",
           "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups"
+          "logs:DescribeLogGroups",
+          "logs:StartQuery",
+          "logs:GetQueryResults",
+          "logs:StopQuery"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Optional: Attach a policy to allow Grafana to retrieve secrets
+resource "aws_iam_role_policy" "grafana_secrets_policy" {
+  name = "grafana-secrets-policy"
+  role = aws_iam_role.grafana_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "secretsmanager:GetSecretValue",
+          "secretsmanager:DescribeSecret",
+          "ssm:GetParameter",
+          "ssm:GetParameters"
         ]
         Resource = "*"
       }

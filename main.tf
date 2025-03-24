@@ -28,7 +28,8 @@ resource "aws_security_group" "my_sg" {
 }
 
 resource "aws_security_group_rule" "ingress" {
-  for_each = toset(var.sg_ports) 
+  for_each = toset([for port in var.sg_ports : tostring(port)]) 
+
   type              = "ingress"
   description       = "Allow traffic on port ${each.value}"
   from_port         = each.value
@@ -50,7 +51,7 @@ resource "aws_security_group" "monitoring_sg" {
     from_port   = 3000
     to_port     = 3000
     protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
+    cidr_blocks = ["0.0.0.0/0"] # Allow traffic from anywhere (for testing)
   }
 
   # Allow all outbound traffic
@@ -256,6 +257,22 @@ resource "aws_ecs_task_definition" "grafana_task" {
         {
           name  = "GF_AUTH_ANONYMOUS_ORG_ROLE"
           value = "Admin"
+        },
+        {
+          name  = "GF_AWS_PROFILES"
+          value = "default"
+        },
+        {
+          name  = "GF_AWS_default_ACCESS_KEY_ID"
+          value = var.grafana_aws_access_key # Replace with a variable or hardcoded value
+        },
+        {
+          name  = "GF_AWS_default_SECRET_ACCESS_KEY"
+          value = var.grafana_aws_secret_key # Replace with a variable or hardcoded value
+        },
+        {
+          name  = "GF_AWS_default_REGION"
+          value = "us-east-1"
         }
       ]
 
