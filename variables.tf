@@ -7,41 +7,41 @@ variable "region" {
 variable "sg_ports" {
   description = "Security Group's Ports"
   type = list(number)
-  default = [80, 443, 5000]
+  default = [80, 443, 5000, 3000]
 }
 
 variable "grafana_anonymous_enabled" {
   description = "Enable anonymous access to Grafana"
   type        = bool
-  default     = true
+  default     = false  # Changed default to false for better security
 }
 
 variable "grafana_anonymous_org_role" {
   description = "Organization role for anonymous users in Grafana"
   type        = string
-  default     = "Admin"
-}
-
-variable "grafana_aws_profiles" {
-  description = "AWS profile name for Grafana"
-  type        = string
-  default     = "default"
-}
-
-variable "grafana_aws_access_key" {
-  description = "AWS access key for Grafana"
-  type        = string
-  sensitive   = true
-}
-
-variable "grafana_aws_secret_key" {
-  description = "AWS secret key for Grafana"
-  type        = string
-  sensitive   = true
+  default     = "Viewer"  # Changed default from Admin to Viewer for better security
 }
 
 variable "grafana_aws_region" {
   description = "AWS region for Grafana"
   type        = string
   default     = "us-east-1"
+}
+
+variable "github_repository" {
+  description = "GitHub repository in format 'org/repo' for OIDC trust"
+  type        = string
+  default     = "your-github-org/your-repo"  # Replace with your actual GitHub org/repo
+}
+
+variable "github_branch" {
+  description = "GitHub branch to allow for OIDC trust"
+  type        = string
+  default     = "main"
+}
+
+variable "log_retention_days" {
+  description = "CloudWatch log retention in days"
+  type        = number
+  default     = 30
 }

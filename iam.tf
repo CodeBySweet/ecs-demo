@@ -69,175 +69,6 @@ resource "aws_iam_role_policy" "cloudwatch_logs_access" {
   })
 }
 
-# Additional Permissions for ECS (if needed)
-resource "aws_iam_role_policy" "ecs_access" {
-  name = "ECSAccessPolicy"
-  role = aws_iam_role.ecs_task_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "ecs:DescribeClusters",
-        "ecs:DescribeTasks",
-        "ecs:ListTasks",
-        "ecs:RunTask",
-        "ecs:StartTask",
-        "ecs:StopTask",
-        "ecs:UpdateService"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
-# Additional Permissions for Secrets Manager (if needed)
-resource "aws_iam_role_policy" "secrets_manager_access" {
-  name = "SecretsManagerAccessPolicy"
-  role = aws_iam_role.ecs_task_execution_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "secretsmanager:GetSecretValue",
-        "secretsmanager:DescribeSecret"
-      ]
-      Resource = "*"
-    }]
-  })
-}
-
-# IAM Role for CodePipeline
-resource "aws_iam_role" "codepipeline_role" {
-  name = "AWSCodePipelineServiceRole-us-east-1-docker-deploy"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Service = "codepipeline.amazonaws.com"
-      }
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-# IAM Policy for CodePipeline (with ECR and CodeConnections permissions)
-resource "aws_iam_policy" "codepipeline_policy" {
-  name = "AWSCodePipelineServicePolicy-us-east-1-docker-deploy"
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "codebuild:BatchGetBuilds",
-          "codebuild:StartBuild",
-          "codebuild:StopBuild",
-          "codebuild:ListBuilds",
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:GetBucketLocation"
-        ],
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:GetAuthorizationToken",
-          "ecr:BatchCheckLayerAvailability",
-          "ecr:GetDownloadUrlForLayer",
-          "ecr:GetRepositoryPolicy",
-          "ecr:DescribeRepositories",
-          "ecr:ListImages",
-          "ecr:DescribeImages",
-          "ecr:BatchGetImage",
-          "ecr:InitiateLayerUpload",
-          "ecr:UploadLayerPart",
-          "ecr:CompleteLayerUpload",
-          "ecr:PutImage"
-        ],
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ecs:UpdateService",
-          "ecs:DescribeServices",
-          "ecs:RegisterTaskDefinition",
-          "ecs:ListTasks",
-          "ecs:DescribeTasks",
-          "ecs:UpdateTaskSet",
-          "iam:PassRole"
-        ],
-        Resource = "*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "codestar-connections:UseConnection",
-          "codestar-connections:GetConnection",
-          "codestar-connections:PassConnection"
-        ],
-        Resource = "arn:aws:codeconnections:us-east-1:626635421987:connection/f11ac47e-d6ab-46a5-9432-d0c7614d3b23"
-      }
-    ]
-  })
-}
-
-# Attach the Policy to the Role
-resource "aws_iam_role_policy_attachment" "codepipeline_policy_attach" {
-  role       = aws_iam_role.codepipeline_role.name
-  policy_arn = aws_iam_policy.codepipeline_policy.arn
-}
-
-# Additional Policy for ECR DescribeRepositories
-resource "aws_iam_role_policy" "ecr_describe_repositories" {
-  name = "ECRDescribeRepositoriesPolicy"
-  role = aws_iam_role.codepipeline_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "ecr:DescribeRepositories"
-        ]
-        Resource = "arn:aws:ecr:us-east-1:626635421987:repository/my-app-repo"
-      }
-    ]
-  })
-}
-
-# Add a new policy for CloudWatch Logs Access to CodePipeline Role
-resource "aws_iam_role_policy" "codepipeline_logs_access" {
-  name = "CodePipelineCloudWatchLogsAccessPolicy"
-  role = aws_iam_role.codepipeline_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
 # IAM Role for Grafana
 resource "aws_iam_role" "grafana_role" {
   name = "grafana-role"
@@ -272,7 +103,10 @@ resource "aws_iam_role_policy" "grafana_cloudwatch_policy" {
           "cloudwatch:GetMetricStatistics",
           "cloudwatch:DescribeAlarms",
           "cloudwatch:GetDashboard",
-          "cloudwatch:ListDashboards"
+          "cloudwatch:ListDashboards",
+          "cloudwatch:GetMetricWidgetImage",
+          "ec2:DescribeInstances",
+          "ec2:DescribeRegions"
         ]
         Resource = "*"
       }
@@ -299,28 +133,6 @@ resource "aws_iam_role_policy" "grafana_logs_policy" {
           "logs:StartQuery",
           "logs:GetQueryResults",
           "logs:StopQuery"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-# Optional: Attach a policy to allow Grafana to retrieve secrets
-resource "aws_iam_role_policy" "grafana_secrets_policy" {
-  name = "grafana-secrets-policy"
-  role = aws_iam_role.grafana_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "secretsmanager:GetSecretValue",
-          "secretsmanager:DescribeSecret",
-          "ssm:GetParameter",
-          "ssm:GetParameters"
         ]
         Resource = "*"
       }

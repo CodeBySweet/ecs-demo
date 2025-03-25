@@ -1,4 +1,3 @@
-
 name: ECS Cluster and Application Deployment
 
 on:
@@ -16,6 +15,11 @@ on:
 env:
   AWS_REGION: us-east-1  # AWS region for deployment
   IMAGE_TAG: latest      # Docker image tag
+  ECR_REPOSITORY: my-app-repo # Must match your Terraform ECR repository name
+
+permissions:
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required for actions/checkout
 
 jobs:
   deploy-or-destroy:
@@ -26,25 +30,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials
+      # Step 2: Configure AWS credentials via OIDC
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v3
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: arn:aws:iam::626635421987:role/GitHubActionsRole
           aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-Deployment
 
       # Step 3: Set up Terraform
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
-          terraform_version: 1.5.7  # Use the desired Terraform version
+          terraform_version: 1.5.7
+          terraform_wrapper: false
 
       # Step 4: Initialize Terraform
       - name: Terraform Init
         run: terraform init
 
-      # Step 5: Apply or Destroy Terraform configuration
+      # Step 5: Terraform Plan (for apply actions)
+      - name: Terraform Plan
+        if: github.event.inputs.action == 'apply'
+        run: terraform plan
+
+      # Step 6: Apply or Destroy Terraform configuration
       - name: Terraform Apply or Destroy
         run: |
           if [ "${{ github.event.inputs.action }}" == "apply" ]; then
@@ -58,17 +68,17 @@ jobs:
             exit 1
           fi
 
-      # Step 6: Skip Docker steps if action is 'destroy'
+      # Step 7: Skip Docker steps if action is 'destroy'
       - name: Check if action is 'apply'
         id: check-action
         run: |
           if [ "${{ github.event.inputs.action }}" == "apply" ]; then
-            echo "::set-output name=should_run::true"
+            echo "should_run=true" >> $GITHUB_OUTPUT
           else
-            echo "::set-output name=should_run::false"
+            echo "should_run=false" >> $GITHUB_OUTPUT
           fi
 
-      # Step 7: Get Terraform outputs (only if action is 'apply')
+      # Step 8: Get Terraform outputs (only if action is 'apply')
       - name: Get Terraform Outputs
         if: steps.check-action.outputs.should_run == 'true'
         id: terraform-outputs
@@ -77,22 +87,12 @@ jobs:
           echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
           echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
 
-      # Step 8: Install dependencies (only if action is 'apply')
+      # Step 9: Install dependencies (only if action is 'apply')
       - name: Install dependencies
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Installing dependencies..."
           pip install -r app/requirements.txt
-
-      # Step 9: Install AWS CLI (only if action is 'apply')
-      - name: Install AWS CLI
-        if: steps.check-action.outputs.should_run == 'true'
-        run: |
-          echo "Installing AWS CLI..."
-          curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-          unzip awscliv2.zip
-          sudo ./aws/install
-          aws --version
 
       # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
       - name: Install Docker and ECR Credential Helper
@@ -105,7 +105,8 @@ jobs:
           sudo systemctl enable docker
 
           echo "Installing AWS ECR Credential Helper..."
-          curl -Lo /usr/local/bin/docker-credential-ecr-login https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/latest/linux-amd64/docker-credential-ecr-login
+          curl -Lo /usr/local/bin/docker-credential-ecr-login \
+            https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/latest/linux-amd64/docker-credential-ecr-login
           chmod +x /usr/local/bin/docker-credential-ecr-login
           mkdir -p ~/.docker
           echo '{"credsStore":"ecr-login"}' > ~/.docker/config.json
@@ -128,49 +129,31 @@ jobs:
           echo "Pushing Docker image to ECR..."
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
-      # Step 13: Enable ECR image scanning (only if action is 'apply')
-      - name: Enable ECR image scanning
-        if: steps.check-action.outputs.should_run == 'true'
-        run: |
-          echo "Enabling ECR image scanning..."
-          aws ecr put-image-scanning-configuration --repository-name $ECR_REPOSITORY --image-scanning-configuration scanOnPush=true
-
-      # Step 14: Wait for ECR image scan to complete (only if action is 'apply')
-      - name: Wait for ECR image scan to complete
-        if: steps.check-action.outputs.should_run == 'true'
-        run: |
-          echo "Waiting for ECR image scan to complete..."
-          MAX_RETRIES=30
-          RETRY_COUNT=0
-          SCAN_STATUS="IN_PROGRESS"
-          while [ "$SCAN_STATUS" = "IN_PROGRESS" ] && [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-            sleep 10
-            SCAN_STATUS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG --query 'imageScanStatus.status' --output text)
-            echo "Scan status: $SCAN_STATUS"
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-          done
-          if [ "$SCAN_STATUS" = "IN_PROGRESS" ]; then
-            echo "❌ Scan did not complete within the expected time."
-            exit 1
-          fi
-
-      # Step 15: Check ECR image scan findings (only if action is 'apply')
+      # Step 13: Check ECR image scan findings (only if action is 'apply')
       - name: Check ECR image scan findings
         if: steps.check-action.outputs.should_run == 'true'
         run: |
-          echo "Checking ECR image scan findings..."
-          FINDINGS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY --image-id imageTag=$IMAGE_TAG --query 'imageScanFindings.findings' --output json)
-          echo "Scan findings: $FINDINGS"
+          echo "Waiting for scan completion..."
+          aws ecr wait image-scan-complete \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=$IMAGE_TAG
 
-          CRITICAL_VULNERABILITIES=$(echo $FINDINGS | jq '.[] | select(.severity == "CRITICAL")')
-          if [ -n "$CRITICAL_VULNERABILITIES" ]; then
-            echo "❌ Critical vulnerabilities found in the image. Failing the build."
+          echo "Checking scan findings..."
+          FINDING_SEVERITIES=$(aws ecr describe-image-scan-findings \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=$IMAGE_TAG \
+            --query 'imageScanFindings.findingSeverityCounts' \
+            --output json)
+
+          echo "Findings: $FINDING_SEVERITIES"
+          
+          CRITICAL_COUNT=$(echo $FINDING_SEVERITIES | jq -r '.CRITICAL // 0')
+          if [ $CRITICAL_COUNT -gt 0 ]; then
+            echo "❌ Critical vulnerabilities found"
             exit 1
-          else
-            echo "✅ No critical vulnerabilities found. Proceeding with deployment."
           fi
 
-      # Step 16: Force new ECS deployment (only if action is 'apply')
+      # Step 14: Force new ECS deployment (only if action is 'apply')
       - name: Force new ECS deployment
         if: steps.check-action.outputs.should_run == 'true'
         run: |

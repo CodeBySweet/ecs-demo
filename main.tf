@@ -67,6 +67,10 @@ resource "aws_security_group" "monitoring_sg" {
 # Declare the ECR repository for the application
 resource "aws_ecr_repository" "my_repo" {
   name = "my-app-repo"
+  
+  image_scanning_configuration {
+    scan_on_push = true
+  }
 }
 
 # Local variables
@@ -224,68 +228,67 @@ resource "aws_ecs_task_definition" "grafana_task" {
   execution_role_arn       = aws_iam_role.grafana_role.arn
   task_role_arn            = aws_iam_role.grafana_role.arn
 
-  container_definitions = jsonencode([
-    {
-      name      = "grafana"
-      image     = local.grafana_image_url
-      cpu       = 256
-      memory    = 512
-      essential = true
+  container_definitions = jsonencode([{
+    name      = "grafana"
+    image     = local.grafana_image_url
+    cpu       = 256
+    memory    = 512
+    essential = true
 
-      portMappings = [
-        {
-          containerPort = 3000
-          hostPort      = 3000
-          protocol      = "tcp"
-        }
-      ]
+    portMappings = [{
+      containerPort = 3000
+      hostPort      = 3000
+      protocol      = "tcp"
+    }]
 
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.monitoring_log_group.name
-          awslogs-region        = "us-east-1"
-          awslogs-stream-prefix = "grafana"
-        }
-      }
-
-      environment = [
-        {
-          name  = "GF_AUTH_ANONYMOUS_ENABLED"
-          value = "true"
-        },
-        {
-          name  = "GF_AUTH_ANONYMOUS_ORG_ROLE"
-          value = "Admin"
-        },
-        {
-          name  = "GF_AWS_PROFILES"
-          value = "default"
-        },
-        {
-          name  = "GF_AWS_default_ACCESS_KEY_ID"
-          value = var.grafana_aws_access_key # Replace with a variable or hardcoded value
-        },
-        {
-          name  = "GF_AWS_default_SECRET_ACCESS_KEY"
-          value = var.grafana_aws_secret_key # Replace with a variable or hardcoded value
-        },
-        {
-          name  = "GF_AWS_default_REGION"
-          value = "us-east-1"
-        }
-      ]
-
-      # Health check for Grafana
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
-        interval    = 30
-        retries     = 3
-        startPeriod = 60
-        timeout     = 5
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.monitoring_log_group.name
+        awslogs-region        = "us-east-1"
+        awslogs-stream-prefix = "grafana"
       }
     }
-  ])
+
+    environment = [
+      {
+        name  = "GF_AUTH_ANONYMOUS_ENABLED",
+        value = var.grafana_anonymous_enabled ? "true" : "false"
+      },
+      {
+        name  = "GF_AUTH_ANONYMOUS_ORG_ROLE",
+        value = var.grafana_anonymous_org_role
+      },
+      {
+        name  = "GF_AWS_default_REGION",
+        value = var.grafana_aws_region
+      },
+      {
+        name  = "GF_AWS_AUTH_ENABLED",
+        value = "true"
+      },
+      {
+        name  = "GF_AWS_EC2_IAM_ROLE_ARN",
+        value = aws_iam_role.grafana_role.arn
+      },
+      {
+        name  = "GF_AWS_ALLOWED_AUTH_PROVIDERS",
+        value = "default"
+      },
+      {
+        name  = "GF_AWS_ASSUME_ROLE_ENABLED",
+        value = "true"
+      }
+    ]
+
+    healthCheck = {
+      command     = ["CMD-SHELL", "curl -f http://localhost:3000/api/health || exit 1"]
+      interval    = 30
+      retries     = 3
+      startPeriod = 60
+      timeout     = 5
+    }
+  }])
 }
 
 # Create an ECS service for Grafana
