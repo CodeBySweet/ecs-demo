@@ -36,7 +36,6 @@ jobs:
         with:
           role-to-assume: arn:aws:iam::626635421987:role/GitHubOIDCRole
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: github-actions-${{ github.run_id }}
 
       # Step 3: Set up Terraform
       - name: Set up Terraform
