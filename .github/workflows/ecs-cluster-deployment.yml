@@ -203,14 +203,27 @@ jobs:
           echo "SPECIFIC_IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
 
-      # Step 15: Optimized ECR scan check (checks specific tag, no waiting)
+      # Step 15: Optimized ECR scan check (skips unsupported OCI images)
       - name: Start ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
-          aws ecr start-image-scan \
+          IMAGE_TYPE=$(aws ecr describe-images \
             --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=$SPECIFIC_IMAGE_TAG \
-            --region $AWS_REGION
+            --image-ids imageTag=$SPECIFIC_IMAGE_TAG \
+            --region $AWS_REGION \
+            --query 'imageDetails[0].imageManifestMediaType' \
+            --output text)
+
+          if [[ "$IMAGE_TYPE" == "application/vnd.docker.distribution.manifest.v2+json" ]]; then
+            echo "Starting image scan for Docker image..."
+            aws ecr start-image-scan \
+              --repository-name $ECR_REPOSITORY \
+              --image-id imageTag=$SPECIFIC_IMAGE_TAG \
+              --region $AWS_REGION
+          else
+            echo "Skipping scan: ECR does not support scanning OCI images."
+          fi
+
 
       # Step 16: Force new ECS deployment with the new image
       - name: Force new ECS deployment
