@@ -89,16 +89,16 @@ resource "aws_ecs_task_definition" "my_task" {
   family                   = "my-app-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = "512"
+  memory                   = "1024"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([
     {
       name      = "my-app-container"
       image     = local.app_image_url
-      cpu       = 256
-      memory    = 512
+      cpu       = 512
+      memory    = 1024
       essential = true
 
       portMappings = [
@@ -120,10 +120,10 @@ resource "aws_ecs_task_definition" "my_task" {
 
       # Health check for the Flask app
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f http://localhost:5000/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
         interval    = 30
-        retries     = 3
-        startPeriod = 60
+        retries     = 5      # Increased from 3
+        startPeriod = 120    # Increased from 60 to allow slower startup
         timeout     = 5
       }
     }
