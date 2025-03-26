@@ -203,27 +203,26 @@ jobs:
             -f Dockerfile .
 
 
-      # Step 15: Optimized ECR scan check (skips unsupported OCI images)
+      # Step 15: Optimized ECR scan check (for 'latest' tag)
       - name: Start ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           IMAGE_TYPE=$(aws ecr describe-images \
             --repository-name $ECR_REPOSITORY \
-            --image-ids imageTag=$SPECIFIC_IMAGE_TAG \
+            --image-ids imageTag=latest \
             --region $AWS_REGION \
             --query 'imageDetails[0].imageManifestMediaType' \
             --output text)
 
           if [[ "$IMAGE_TYPE" == "application/vnd.docker.distribution.manifest.v2+json" ]]; then
-            echo "Starting image scan for Docker image..."
+            echo "Starting image scan for 'latest' Docker image..."
             aws ecr start-image-scan \
               --repository-name $ECR_REPOSITORY \
-              --image-id imageTag=$SPECIFIC_IMAGE_TAG \
+              --image-id imageTag=latest \
               --region $AWS_REGION
           else
             echo "Skipping scan: ECR does not support scanning OCI images."
           fi
-
 
       # Step 16: Force new ECS deployment with the new image
       - name: Force new ECS deployment
