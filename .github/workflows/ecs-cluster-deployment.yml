@@ -94,15 +94,14 @@ jobs:
           pip install -r requirements.txt
 
       # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
+      # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
       - name: Install Docker and ECR Credential Helper
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Installing Docker..."
-          sudo apt-get update
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
-          sudo systemctl enable docker
-
+          curl -fsSL https://get.docker.com -o get-docker.sh
+          sudo sh get-docker.sh
+          
           echo "Installing AWS ECR Credential Helper..."
           curl -Lo /usr/local/bin/docker-credential-ecr-login \
             https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/latest/linux-amd64/docker-credential-ecr-login
@@ -116,15 +115,18 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v1
 
-      # Step 12: Build, tag, and push Docker image to Amazon ECR (only if action is 'apply')
+      # Step 12: Build, tag, and push Docker image
       - name: Build, tag, and push Docker image to Amazon ECR
         if: steps.check-action.outputs.should_run == 'true'
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
           IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          echo "Building Docker image..."
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f app/Dockerfile .
+          echo "Building Docker image with cache..."
+          docker build \
+            --cache-from $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -f app/Dockerfile .
           echo "Pushing Docker image to ECR..."
           docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
