@@ -187,64 +187,26 @@ jobs:
             -f Dockerfile .
 
 
-      # Step 15: Enable ECR image scanning and check findings
-      - name: Check ECR image scan findings
+      # Minimal scan check (no waiting)
+      - name: Quick ECR scan check
         if: steps.check-action.outputs.should_run == 'true'
         run: |
-          # Enable scan on push if not already enabled
-          SCAN_ON_PUSH=$(aws ecr describe-repositories --repository-names $ECR_REPOSITORY --query 'repositories[0].imageScanningConfiguration.scanOnPush' --output text)
-          if [ "$SCAN_ON_PUSH" != "true" ]; then
-            echo "Enabling scan on push for repository..."
-            aws ecr put-image-scanning-configuration \
-              --repository-name $ECR_REPOSITORY \
-              --image-scanning-configuration scanOnPush=true \
-              --region $AWS_REGION
-          fi
-          
-          # Wait for scan to complete (with timeout)
-          echo "Waiting for scan completion (max 5 minutes)..."
-          timeout 300 bash -c "
-            while true; do
-              SCAN_STATUS=$(aws ecr describe-image-scan-findings \
-                --repository-name $ECR_REPOSITORY \
-                --image-id imageTag=latest \
-                --query 'imageScanStatus.status' \
-                --output text 2>/dev/null || echo 'NOT_FOUND')
-              
-              if [ \"$SCAN_STATUS\" == \"COMPLETE\" ]; then
-                echo \"Scan completed successfully\"
-                break
-              elif [ \"$SCAN_STATUS\" == \"FAILED\" ]; then
-                echo \"Scan failed\"
-                exit 1
-              elif [ \"$SCAN_STATUS\" == \"NOT_FOUND\" ]; then
-                echo \"Scan not found yet, waiting...\"
-                sleep 10
-              else
-                echo \"Scan status: $SCAN_STATUS, waiting...\"
-                sleep 10
-              fi
-            done
-          "
-          
-          # Check scan findings if scan completed
-          if [ $? -eq 0 ]; then
-            echo "Checking scan findings..."
-            FINDING_SEVERITIES=$(aws ecr describe-image-scan-findings \
+          aws ecr put-image-scanning-configuration \
+            --repository-name $ECR_REPOSITORY \
+            --image-scanning-configuration scanOnPush=true \
+            --region $AWS_REGION
+
+          CRITICAL_COUNT=$(aws ecr wait image-scan-complete \
+            --repository-name $ECR_REPOSITORY \
+            --image-id imageTag=latest \
+            && aws ecr describe-image-scan-findings \
               --repository-name $ECR_REPOSITORY \
               --image-id imageTag=latest \
-              --query 'imageScanFindings.findingSeverityCounts' \
-              --output json)
-            
-            echo "Findings: $FINDING_SEVERITIES"
-            
-            CRITICAL_COUNT=$(echo $FINDING_SEVERITIES | jq -r '.CRITICAL // 0')
-            if [ $CRITICAL_COUNT -gt 0 ]; then
-              echo "❌ Critical vulnerabilities found"
-              exit 1
-            fi
-          else
-            echo "⚠️ Scan did not complete within timeout period, continuing anyway"
+              --query 'length(imageScanFindings.findingSeverityCounts.CRITICAL || `[]`)')
+          
+          if [ $CRITICAL_COUNT -gt 0 ]; then
+            echo "Critical vulnerabilities found: $CRITICAL_COUNT"
+            exit 1
           fi
 
       # Step 16: Force new ECS deployment with the new image
