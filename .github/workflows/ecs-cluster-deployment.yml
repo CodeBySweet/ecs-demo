@@ -60,26 +60,32 @@ jobs:
             terraform apply -auto-approve
           elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
             echo "Destroying Terraform configuration..."
-            
-            # First delete all images in the repository
-            echo "Deleting all images from ECR repository..."
-            IMAGE_DIGESTS=$(aws ecr describe-images --repository-name $ECR_REPOSITORY \
-              --query 'imageDetails[*].imageDigest' --output text)
-            
-            if [ -n "$IMAGE_DIGESTS" ]; then
-              for digest in $IMAGE_DIGESTS; do
-                echo "Deleting image with digest: $digest"
-                aws ecr batch-delete-image \
-                  --repository-name $ECR_REPOSITORY \
-                  --image-ids imageDigest=$digest \
-                  --region $AWS_REGION
-              done
-              echo "All images deleted successfully"
+
+            # Check if the ECR repository exists before trying to delete images
+            echo "Checking if ECR repository exists..."
+            if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION &>/dev/null; then
+              echo "ECR repository exists. Deleting all images..."
+              
+              IMAGE_DIGESTS=$(aws ecr describe-images --repository-name $ECR_REPOSITORY \
+                --query 'imageDetails[*].imageDigest' --output text --region $AWS_REGION)
+              
+              if [ -n "$IMAGE_DIGESTS" ]; then
+                for digest in $IMAGE_DIGESTS; do
+                  echo "Deleting image with digest: $digest"
+                  aws ecr batch-delete-image \
+                    --repository-name $ECR_REPOSITORY \
+                    --image-ids imageDigest=$digest \
+                    --region $AWS_REGION
+                done
+                echo "All images deleted successfully."
+              else
+                echo "No images found in repository."
+              fi
             else
-              echo "No images found in repository"
+              echo "ECR repository does not exist. Skipping image deletion."
             fi
             
-            # Then destroy infrastructure
+            # Now proceed with Terraform destroy
             echo "Proceeding with terraform destroy..."
             terraform destroy -auto-approve
           else
