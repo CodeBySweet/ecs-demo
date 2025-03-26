@@ -6,20 +6,20 @@ variable "region" {
 # Security Group Ports
 variable "sg_ports" {
   description = "Security Group's Ports"
-  type = list(number)
-  default = [80, 443, 5000, 3000]
+  type        = list(number)
+  default     = [80, 443, 5000, 3000]
 }
 
 variable "grafana_anonymous_enabled" {
   description = "Enable anonymous access to Grafana"
   type        = bool
-  default     = false  # Changed default to false for better security
+  default     = false # Changed default to false for better security
 }
 
 variable "grafana_anonymous_org_role" {
   description = "Organization role for anonymous users in Grafana"
   type        = string
-  default     = "Viewer"  # Changed default from Admin to Viewer for better security
+  default     = "Viewer" # Changed default from Admin to Viewer for better security
 }
 
 variable "grafana_aws_region" {
@@ -31,7 +31,7 @@ variable "grafana_aws_region" {
 variable "github_repository" {
   description = "GitHub repository in format 'org/repo' for OIDC trust"
   type        = string
-  default     = "your-github-org/your-repo"  # Replace with your actual GitHub org/repo
+  default     = "your-github-org/your-repo" # Replace with your actual GitHub org/repo
 }
 
 variable "github_branch" {

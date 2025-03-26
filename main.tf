@@ -28,7 +28,7 @@ resource "aws_security_group" "my_sg" {
 }
 
 resource "aws_security_group_rule" "ingress" {
-  for_each = toset([for port in var.sg_ports : tostring(port)]) 
+  for_each = toset([for port in var.sg_ports : tostring(port)])
 
   type              = "ingress"
   description       = "Allow traffic on port ${each.value}"
@@ -66,10 +66,10 @@ resource "aws_security_group" "monitoring_sg" {
 
 # Declare the ECR repository for the application
 resource "aws_ecr_repository" "my_repo" {
-  name = "my-app-repo"
+  name                 = "my-app-repo"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
-  
+
   image_scanning_configuration {
     scan_on_push = true
   }
@@ -89,22 +89,27 @@ resource "aws_ecs_task_definition" "my_task" {
   family                   = "my-app-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "512"
-  memory                   = "1024"
+  cpu                      = "1024"
+  memory                   = "3072"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
 
   container_definitions = jsonencode([
     {
       name      = "my-app-container"
       image     = local.app_image_url
-      cpu       = 512
-      memory    = 1024
+      cpu       = 1024
+      memory    = 3072
       essential = true
 
       portMappings = [
         {
           containerPort = 5000 # Flask app endpoint
           hostPort      = 5000
+          protocol      = "tcp"
+        },
+        {
+          containerPort = 80 # Added for health checks
+          hostPort      = 80
           protocol      = "tcp"
         }
       ]
@@ -118,12 +123,12 @@ resource "aws_ecs_task_definition" "my_task" {
         }
       }
 
-      # Health check for the Flask app
+      # Health check configuration
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:80/health || exit 1"]
         interval    = 30
-        retries     = 5      # Increased from 3
-        startPeriod = 120    # Increased from 60 to allow slower startup
+        retries     = 5
+        startPeriod = 120
         timeout     = 5
       }
     }
@@ -174,7 +179,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
   period              = 300
   statistic           = "Average"
   threshold           = 80
-  alarm_actions       = ["arn:aws:sns:us-east-1:626635421987:my-sns-topic"] # Replace with your actual account ID
+  alarm_actions       = ["arn:aws:sns:us-east-1:626635421987:my-sns-topic"]
   dimensions = {
     ClusterName = aws_ecs_cluster.my_cluster.name
     ServiceName = aws_ecs_service.my_service.name
@@ -225,16 +230,16 @@ resource "aws_ecs_task_definition" "grafana_task" {
   family                   = "grafana-task"
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
-  cpu                      = "256"
-  memory                   = "512"
+  cpu                      = "1024"
+  memory                   = "3072"
   execution_role_arn       = aws_iam_role.grafana_role.arn
   task_role_arn            = aws_iam_role.grafana_role.arn
 
   container_definitions = jsonencode([{
     name      = "grafana"
     image     = local.grafana_image_url
-    cpu       = 256
-    memory    = 512
+    cpu       = 1024
+    memory    = 3072
     essential = true
 
     portMappings = [{
