@@ -192,21 +192,15 @@ jobs:
         id: get-timestamp
         run: echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
 
-      # Step 14: Build and push image with versioned tags
+      # Step 14: Build and push image with ONLY the 'latest' tag
       - name: Build, tag, and push Docker image
         if: steps.check-action.outputs.should_run == 'true'
-        env:
-          IMAGE_TAG: ${{ steps.get-commit-hash.outputs.commit-hash }}-${{ steps.get-timestamp.outputs.timestamp }}
         run: |
           docker buildx build \
             --platform linux/amd64 \
             --push \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             -f Dockerfile .
-          
-          # Store the specific image tag for later use
-          echo "SPECIFIC_IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
 
       # Step 15: Optimized ECR scan check (skips unsupported OCI images)
