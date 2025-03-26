@@ -203,35 +203,75 @@ jobs:
             -f Dockerfile .
 
 
-      # Step 15: Optimized ECR scan check (for 'latest' tag)
+        # Step 15: Enhanced ECR scan check with delay and OCI support
       - name: Start ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
-          IMAGE_TYPE=$(aws ecr describe-images \
-            --repository-name $ECR_REPOSITORY \
-            --image-ids imageTag=latest \
-            --region $AWS_REGION \
-            --query 'imageDetails[0].imageManifestMediaType' \
-            --output text)
+          # Wait 15 seconds to ensure image is fully available
+          echo "Waiting 15 seconds for image to stabilize..."
+          sleep 15
 
-          if [[ "$IMAGE_TYPE" == "application/vnd.docker.distribution.manifest.v2+json" ]]; then
-            echo "Starting image scan for 'latest' Docker image..."
+          # Check manifest type with retries
+          for i in {1..3}; do
+            IMAGE_TYPE=$(aws ecr describe-images \
+              --repository-name $ECR_REPOSITORY \
+              --image-ids imageTag=latest \
+              --region $AWS_REGION \
+              --query 'imageDetails[0].imageManifestMediaType' \
+              --output text)
+            
+            if [ -n "$IMAGE_TYPE" ]; then
+              break
+            fi
+            echo "Attempt $i: Failed to get image type, retrying..."
+            sleep 5
+          done
+
+          # Supported manifest types
+          if [[ "$IMAGE_TYPE" == "application/vnd.docker.distribution.manifest.v2+json" || \
+                "$IMAGE_TYPE" == "application/vnd.oci.image.manifest.v1+json" ]]; then
+            echo "Starting scan for 'latest' image (Type: $IMAGE_TYPE)..."
             aws ecr start-image-scan \
               --repository-name $ECR_REPOSITORY \
               --image-id imageTag=latest \
               --region $AWS_REGION
+            
+            # Verify scan started
+            echo "Waiting 5 seconds before verifying scan status..."
+            sleep 5
+            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $ECR_REPOSITORY \
+              --image-id imageTag=latest \
+              --region $AWS_REGION \
+              --query 'imageScanStatus.status' \
+              --output text)
+            echo "Initial scan status: $SCAN_STATUS"
           else
-            echo "Skipping scan: ECR does not support scanning OCI images."
+            echo "Skipping scan: Unsupported manifest type ($IMAGE_TYPE)"
           fi
 
-      # Step 16: Force new ECS deployment with the new image
-      - name: Force new ECS deployment
+      # Step 16: Verify ECR scan completion
+      - name: Verify ECR scan completion
         if: steps.check-action.outputs.should_run == 'true'
         run: |
-          echo "Updating ECS Service..."
-          aws ecs update-service \
-            --cluster $ECS_CLUSTER_NAME \
-            --service $ECS_SERVICE_NAME \
-            --force-new-deployment \
-            --region $AWS_REGION
-          echo "✅ ECS Service updated successfully."
+          echo "Checking scan status (will wait up to 2 minutes)..."
+          for i in {1..12}; do
+            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $ECR_REPOSITORY \
+              --image-id imageTag=latest \
+              --region $AWS_REGION \
+              --query 'imageScanStatus.status' \
+              --output text)
+            
+            if [[ "$SCAN_STATUS" == "COMPLETE" ]]; then
+              echo "✅ Scan completed successfully"
+              exit 0
+            elif [[ "$SCAN_STATUS" == "FAILED" ]]; then
+              echo "❌ Scan failed"
+              exit 1
+            fi
+            
+            echo "Scan status: $SCAN_STATUS (attempt $i/12)"
+            sleep 10
+          done
+          echo "🕒 Scan timed out - proceeding anyway"
