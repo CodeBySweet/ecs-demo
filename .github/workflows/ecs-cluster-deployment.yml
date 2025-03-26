@@ -91,7 +91,7 @@ jobs:
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Installing dependencies..."
-          pip install -r app/requirements.txt
+          pip install -r requirements.txt
 
       # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
       - name: Install Docker and ECR Credential Helper
