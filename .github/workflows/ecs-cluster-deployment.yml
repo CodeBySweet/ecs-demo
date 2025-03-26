@@ -56,22 +56,34 @@ jobs:
       - name: Terraform Apply or Destroy
         run: |
           if [ "${{ github.event.inputs.action }}" == "apply" ]; then
+            echo "Applying Terraform configuration..."
             terraform apply -auto-approve
           elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
-            # First delete all images
-            echo "Force-cleaning ECR repository..."
-            aws ecr describe-images --repository-name $ECR_REPOSITORY \
-              --query 'imageDetails[*].imageDigest' --output text \
-              | while read digest; do
-                  aws ecr batch-delete-image \
-                    --repository-name $ECR_REPOSITORY \
-                    --image-ids imageDigest=$digest
-                done
+            echo "Destroying Terraform configuration..."
+            
+            # First delete all images in the repository
+            echo "Deleting all images from ECR repository..."
+            IMAGE_DIGESTS=$(aws ecr describe-images --repository-name $ECR_REPOSITORY \
+              --query 'imageDetails[*].imageDigest' --output text)
+            
+            if [ -n "$IMAGE_DIGESTS" ]; then
+              for digest in $IMAGE_DIGESTS; do
+                echo "Deleting image with digest: $digest"
+                aws ecr batch-delete-image \
+                  --repository-name $ECR_REPOSITORY \
+                  --image-ids imageDigest=$digest \
+                  --region $AWS_REGION
+              done
+              echo "All images deleted successfully"
+            else
+              echo "No images found in repository"
+            fi
             
             # Then destroy infrastructure
+            echo "Proceeding with terraform destroy..."
             terraform destroy -auto-approve
           else
-            echo "❌ Invalid action specified"
+            echo "❌ Invalid action specified. Use 'apply' or 'destroy'."
             exit 1
           fi
 
