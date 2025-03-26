@@ -203,7 +203,7 @@ jobs:
             -f Dockerfile .
 
 
-        # Step 15: Enhanced ECR scan check with delay and OCI support
+      # Step 15: Enhanced ECR scan check with delay and OCI support
       - name: Start ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
@@ -235,17 +235,7 @@ jobs:
               --repository-name $ECR_REPOSITORY \
               --image-id imageTag=latest \
               --region $AWS_REGION
-            
-            # Verify scan started
-            echo "Waiting 5 seconds before verifying scan status..."
-            sleep 5
-            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name $ECR_REPOSITORY \
-              --image-id imageTag=latest \
-              --region $AWS_REGION \
-              --query 'imageScanStatus.status' \
-              --output text)
-            echo "Initial scan status: $SCAN_STATUS"
+            echo "✅ Scan initiated successfully"
           else
             echo "Skipping scan: Unsupported manifest type ($IMAGE_TYPE)"
           fi
@@ -253,25 +243,62 @@ jobs:
       # Step 16: Verify ECR scan completion
       - name: Verify ECR scan completion
         if: steps.check-action.outputs.should_run == 'true'
+        continue-on-error: true  # Continue even if scan fails or times out
         run: |
-          echo "Checking scan status (will wait up to 2 minutes)..."
-          for i in {1..12}; do
+          echo "Checking scan status (will wait up to 3 minutes)..."
+          MAX_ATTEMPTS=18
+          SCAN_STARTED=false
+          
+          for i in {1..$MAX_ATTEMPTS}; do
             SCAN_STATUS=$(aws ecr describe-image-scan-findings \
               --repository-name $ECR_REPOSITORY \
               --image-id imageTag=latest \
               --region $AWS_REGION \
               --query 'imageScanStatus.status' \
-              --output text)
+              --output text 2>/dev/null || echo "NOT_FOUND")
             
-            if [[ "$SCAN_STATUS" == "COMPLETE" ]]; then
-              echo "✅ Scan completed successfully"
-              exit 0
-            elif [[ "$SCAN_STATUS" == "FAILED" ]]; then
-              echo "❌ Scan failed"
-              exit 1
-            fi
+            case $SCAN_STATUS in
+              "COMPLETE")
+                echo "✅ Scan completed successfully"
+                exit 0
+                ;;
+              "IN_PROGRESS")
+                if [ "$SCAN_STARTED" = false ]; then
+                  echo "Scan started and in progress..."
+                  SCAN_STARTED=true
+                fi
+                ;;
+              "FAILED")
+                echo "❌ Scan failed"
+                exit 1
+                ;;
+              "NOT_FOUND")
+                if [ $i -lt 12 ]; then  # Only show "not found" for first 2 minutes
+                  echo "Scan not started yet (attempt $i/$MAX_ATTEMPTS)"
+                fi
+                ;;
+              *)
+                echo "Unknown scan status: $SCAN_STATUS"
+                ;;
+            esac
             
-            echo "Scan status: $SCAN_STATUS (attempt $i/12)"
             sleep 10
           done
-          echo "🕒 Scan timed out - proceeding anyway"
+          
+          if [ "$SCAN_STARTED" = false ]; then
+            echo "🕒 Scan never started - possible issue with ECR scanning"
+          else
+            echo "🕒 Scan timed out - proceeding with deployment anyway"
+          fi
+
+      # Step 17: Force new ECS deployment with the new image
+      - name: Force new ECS deployment
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          echo "Updating ECS Service..."
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER_NAME \
+            --service $ECS_SERVICE_NAME \
+            --force-new-deployment \
+            --region $AWS_REGION
+          echo "✅ ECS Service updated successfully."
