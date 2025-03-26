@@ -163,7 +163,7 @@ jobs:
             --push \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$(git rev-parse --short HEAD) \
-            -f app/Dockerfile .
+            -f Dockerfile .
 
 
       # Step 15: Check ECR image scan findings
