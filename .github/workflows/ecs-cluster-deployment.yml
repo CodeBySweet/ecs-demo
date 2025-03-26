@@ -117,42 +117,54 @@ jobs:
           mkdir -p ~/.docker
           echo '{"credsStore":"ecr-login"}' > ~/.docker/config.json
 
-      # Step 11: Set up Docker Buildx
+      # Step 11: Configure Docker to use ECR credential helper
+      - name: Configure Docker credentials helper
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          mkdir -p ~/.docker
+          echo '{
+            "credHelpers": {
+              "*.dkr.ecr.*.amazonaws.com": "ecr-login"
+            }
+          }' > ~/.docker/config.json
+
+      # Step 12: Login to ECR using AWS CLI
+      - name: Login to Amazon ECR
+        if: steps.check-action.outputs.should_run == 'true'
+        id: login-ecr
+        run: |
+          # Install AWS CLI if not present
+          if ! command -v aws &> /dev/null; then
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
+          fi
+          
+          # Get ECR registry URI
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "ECR_REGISTRY=$ECR_REGISTRY" >> $GITHUB_ENV
+          
+          # Login to ECR
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin $ECR_REGISTRY
+
+      # Step 13: Set up Docker Buildx
       - name: Set up Docker Buildx
         if: steps.check-action.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v2
 
-      # Step 12: Get commit hash and timestamp for tagging
-      - name: Get image tags
+      # Step 14: Build and push image
+      - name: Build, tag, and push Docker image
         if: steps.check-action.outputs.should_run == 'true'
-        id: get-tags
         run: |
-          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
-          echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
-
-      # Step 13: Login to Amazon ECR
-      - name: Login to Amazon ECR
-        if: steps.check-action.outputs.should_run == 'true'
-        uses: aws-actions/amazon-ecr-login@v2
-        id: login-ecr
-
-      # Step 14: Build, tag, and push Docker image with multiple tags
-      - name: Build, tag, and push Docker image to Amazon ECR
-        if: steps.check-action.outputs.should_run == 'true'
-        env:
-          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-        run: |
-          # Build with multiple tags
           docker buildx build \
             --platform linux/amd64 \
             --push \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.get-tags.outputs.commit_hash }} \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.get-tags.outputs.timestamp }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$(git rev-parse --short HEAD) \
             -f app/Dockerfile .
-          
-          # Set the primary image tag as output
-          echo "IMAGE_TAG=${{ steps.get-tags.outputs.commit_hash }}" >> $GITHUB_ENV
+
 
       # Step 15: Check ECR image scan findings
       - name: Check ECR image scan findings
