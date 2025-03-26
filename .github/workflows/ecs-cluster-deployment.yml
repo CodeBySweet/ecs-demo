@@ -14,7 +14,6 @@ on:
 
 env:
   AWS_REGION: us-east-1  # AWS region for deployment
-  IMAGE_TAG: latest      # Docker image tag
   ECR_REPOSITORY: my-app-repo # Must match your Terraform ECR repository name
 
 permissions:
@@ -93,58 +92,81 @@ jobs:
           echo "Installing dependencies..."
           pip install -r requirements.txt
 
-      # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
+      # Step 10: Install Docker and ECR Credential Helper
       - name: Install Docker and ECR Credential Helper
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Installing Docker..."
+          sudo apt-get remove -y docker docker-engine docker.io containerd runc || true
           sudo apt-get update
-          sudo apt-get install -y docker.io
-          sudo systemctl start docker
+          sudo apt-get install -y \
+              apt-transport-https \
+              ca-certificates \
+              curl \
+              gnupg-agent \
+              software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository \
+             "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+             $(lsb_release -cs) \
+             stable"
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
           sudo usermod -aG docker $USER
-          sudo newgrp docker
-          
-          echo "Installing AWS ECR Credential Helper..."
           sudo apt-get install -y amazon-ecr-credential-helper
           mkdir -p ~/.docker
-          echo '{
-            "credsStore": "ecr-login"
-          }' > ~/.docker/config.json
+          echo '{"credsStore":"ecr-login"}' > ~/.docker/config.json
 
-      # Step 11: Log in to Amazon ECR (only if action is 'apply')
-      - name: Log in to Amazon ECR
+      # Step 11: Set up Docker Buildx
+      - name: Set up Docker Buildx
+        if: steps.check-action.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v2
+
+      # Step 12: Get commit hash and timestamp for tagging
+      - name: Get image tags
+        if: steps.check-action.outputs.should_run == 'true'
+        id: get-tags
+        run: |
+          echo "commit_hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+          echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
+
+      # Step 13: Login to Amazon ECR
+      - name: Login to Amazon ECR
         if: steps.check-action.outputs.should_run == 'true'
         uses: aws-actions/amazon-ecr-login@v2
         id: login-ecr
 
-      # Step 12: Build, tag, and push Docker image
+      # Step 14: Build, tag, and push Docker image with multiple tags
       - name: Build, tag, and push Docker image to Amazon ECR
         if: steps.check-action.outputs.should_run == 'true'
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          IMAGE_TAG: ${{ env.IMAGE_TAG }}
         run: |
-          echo "Building Docker image with cache..."
-          docker build \
-            --cache-from $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+          # Build with multiple tags
+          docker buildx build \
+            --platform linux/amd64 \
+            --push \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.get-tags.outputs.commit_hash }} \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:${{ steps.get-tags.outputs.timestamp }} \
             -f app/Dockerfile .
-          echo "Pushing Docker image to ECR..."
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          
+          # Set the primary image tag as output
+          echo "IMAGE_TAG=${{ steps.get-tags.outputs.commit_hash }}" >> $GITHUB_ENV
 
-      # Step 13: Check ECR image scan findings (only if action is 'apply')
+      # Step 15: Check ECR image scan findings
       - name: Check ECR image scan findings
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Waiting for scan completion..."
           aws ecr wait image-scan-complete \
             --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=$IMAGE_TAG
+            --image-id imageTag=latest
 
           echo "Checking scan findings..."
           FINDING_SEVERITIES=$(aws ecr describe-image-scan-findings \
             --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=$IMAGE_TAG \
+            --image-id imageTag=latest \
             --query 'imageScanFindings.findingSeverityCounts' \
             --output json)
 
@@ -156,7 +178,7 @@ jobs:
             exit 1
           fi
 
-      # Step 14: Force new ECS deployment (only if action is 'apply')
+      # Step 16: Force new ECS deployment with the new image
       - name: Force new ECS deployment
         if: steps.check-action.outputs.should_run == 'true'
         run: |
