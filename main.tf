@@ -67,6 +67,8 @@ resource "aws_security_group" "monitoring_sg" {
 # Declare the ECR repository for the application
 resource "aws_ecr_repository" "my_repo" {
   name = "my-app-repo"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
   
   image_scanning_configuration {
     scan_on_push = true
