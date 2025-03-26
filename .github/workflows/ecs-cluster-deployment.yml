@@ -60,6 +60,18 @@ jobs:
             terraform apply -auto-approve
           elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
             echo "Destroying Terraform configuration..."
+            
+            # First clean up ECR images if repository exists
+            if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION >/dev/null 2>&1; then
+              echo "Cleaning up ECR images before destroy..."
+              IMAGES=$(aws ecr list-images --repository-name $ECR_REPOSITORY --query 'imageIds[*]' --output json)
+              if [ "$IMAGES" != "[]" ]; then
+                echo "Deleting existing images..."
+                aws ecr batch-delete-image --repository-name $ECR_REPOSITORY --image-ids "$IMAGES" --region $AWS_REGION
+              fi
+            fi
+            
+            # Then destroy infrastructure
             terraform destroy -auto-approve
           else
             echo "❌ Invalid action specified. Use 'apply' or 'destroy'."
