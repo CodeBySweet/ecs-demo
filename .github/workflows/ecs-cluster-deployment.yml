@@ -94,26 +94,28 @@ jobs:
           pip install -r requirements.txt
 
       # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
-      # Step 10: Install Docker and ECR Credential Helper (only if action is 'apply')
       - name: Install Docker and ECR Credential Helper
         if: steps.check-action.outputs.should_run == 'true'
         run: |
           echo "Installing Docker..."
-          curl -fsSL https://get.docker.com -o get-docker.sh
-          sudo sh get-docker.sh
+          sudo apt-get update
+          sudo apt-get install -y docker.io
+          sudo systemctl start docker
+          sudo usermod -aG docker $USER
+          sudo newgrp docker
           
           echo "Installing AWS ECR Credential Helper..."
-          curl -Lo /usr/local/bin/docker-credential-ecr-login \
-            https://amazon-ecr-credential-helper-releases.s3.us-east-2.amazonaws.com/latest/linux-amd64/docker-credential-ecr-login
-          chmod +x /usr/local/bin/docker-credential-ecr-login
+          sudo apt-get install -y amazon-ecr-credential-helper
           mkdir -p ~/.docker
-          echo '{"credsStore":"ecr-login"}' > ~/.docker/config.json
+          echo '{
+            "credsStore": "ecr-login"
+          }' > ~/.docker/config.json
 
       # Step 11: Log in to Amazon ECR (only if action is 'apply')
       - name: Log in to Amazon ECR
         if: steps.check-action.outputs.should_run == 'true'
-        id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        id: login-ecr
 
       # Step 12: Build, tag, and push Docker image
       - name: Build, tag, and push Docker image to Amazon ECR
