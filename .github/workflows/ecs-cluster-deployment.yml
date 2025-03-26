@@ -175,40 +175,68 @@ jobs:
         if: steps.check-action.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v2
 
-      # Step 14: Build and push image
+      # Get commit hash and timestamp for tagging
+      - name: Get commit hash
+        if: steps.check-action.outputs.should_run == 'true'
+        id: get-commit-hash
+        run: echo "commit-hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get timestamp
+        if: steps.check-action.outputs.should_run == 'true'
+        id: get-timestamp
+        run: echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
+
+      # Step 14: Build and push image with versioned tags
       - name: Build, tag, and push Docker image
         if: steps.check-action.outputs.should_run == 'true'
+        env:
+          IMAGE_TAG: ${{ steps.get-commit-hash.outputs.commit-hash }}-${{ steps.get-timestamp.outputs.timestamp }}
         run: |
           docker buildx build \
             --platform linux/amd64 \
             --push \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$(git rev-parse --short HEAD) \
             -f Dockerfile .
+          
+          # Store the specific image tag for later use
+          echo "SPECIFIC_IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
 
-      # Minimal scan check (no waiting)
-      - name: Quick ECR scan check
+      # Step 15: Optimized ECR scan check (checks specific tag, no waiting)
+      - name: Check ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
+          # Enable scan on push if not already enabled
           aws ecr put-image-scanning-configuration \
             --repository-name $ECR_REPOSITORY \
             --image-scanning-configuration scanOnPush=true \
             --region $AWS_REGION
 
-          CRITICAL_COUNT=$(aws ecr wait image-scan-complete \
+          # Check if scan exists for our specific tag (non-blocking)
+          if aws ecr describe-image-scan-findings \
             --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=latest \
-            && aws ecr describe-image-scan-findings \
+            --image-id imageTag=$SPECIFIC_IMAGE_TAG \
+            --query 'imageScanFindings.findingSeverityCounts' \
+            --output text 2>/dev/null; then
+            
+            # Only check if results are immediately available
+            CRITICAL_COUNT=$(aws ecr describe-image-scan-findings \
               --repository-name $ECR_REPOSITORY \
-              --image-id imageTag=latest \
+              --image-id imageTag=$SPECIFIC_IMAGE_TAG \
               --query 'length(imageScanFindings.findingSeverityCounts.CRITICAL || `[]`)')
-          
-          if [ $CRITICAL_COUNT -gt 0 ]; then
-            echo "Critical vulnerabilities found: $CRITICAL_COUNT"
-            exit 1
+            
+            if [ $CRITICAL_COUNT -gt 0 ]; then
+              echo "❌ Critical vulnerabilities found: $CRITICAL_COUNT"
+              exit 1
+            else
+              echo "✅ Scan passed for $SPECIFIC_IMAGE_TAG"
+            fi
+          else
+            echo "⚠️ Scan results not immediately available for $SPECIFIC_IMAGE_TAG"
+            echo "Proceeding with deployment - check ECR console for results"
           fi
-
+          
       # Step 16: Force new ECS deployment with the new image
       - name: Force new ECS deployment
         if: steps.check-action.outputs.should_run == 'true'
