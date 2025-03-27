@@ -176,6 +176,8 @@ jobs:
     # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
+      env:
+        IMAGE_TAG: ${{ steps.build-image.outputs.image.split(':')[1] }}
       run: |
         echo "Initiating security scan for image: ${{ steps.build-image.outputs.image }}"
         aws ecr start-image-scan \
