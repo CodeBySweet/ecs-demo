@@ -65,18 +65,20 @@ jobs:
       run: terraform init
 
     # ----------------------------------
-    # Step 5: Validate Terraform configuration
+    # Step 5: Validate Terraform configuration (only for plan)
     # ----------------------------------
     - name: Terraform Validate
       id: validate
+      if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform validate
       
     # ----------------------------------
-    # Step 6: Check Terraform formatting
+    # Step 6: Check Terraform formatting (only for plan)
     # ----------------------------------
     - name: Terraform Format Check
       id: fmt
+      if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform fmt -check -recursive
 
@@ -90,7 +92,6 @@ jobs:
       run: |
         terraform plan \
           -input=false \
-          -out=tfplan \
           -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
         echo "PLAN_STATUS=success" >> $GITHUB_ENV
         
@@ -99,7 +100,10 @@ jobs:
       if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform apply -input=false -auto-approve tfplan
+        terraform apply \
+          -input=false \
+          -auto-approve \
+          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
         echo "APPLY_STATUS=success" >> $GITHUB_ENV
 
     - name: Terraform Destroy
@@ -107,18 +111,11 @@ jobs:
       if: github.event.inputs.terraform_action == 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform plan -destroy -out=tfdestroy
-        terraform apply -destroy -auto-approve tfdestroy
+        terraform destroy \
+          -input=false \
+          -auto-approve \
+          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
         echo "DESTROY_STATUS=success" >> $GITHUB_ENV
-
-  build-scan-deploy:
-    name: Build, Scan, Deploy
-    needs: terraform
-    runs-on: ubuntu-latest
-    if: |
-      github.event.inputs.terraform_action != 'destroy' &&
-      (needs.terraform.outputs.PLAN_STATUS == 'success' ||
-       needs.terraform.outputs.APPLY_STATUS == 'success')
 
     steps:
     # ----------------------------------
