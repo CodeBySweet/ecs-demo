@@ -58,13 +58,19 @@ jobs:
         run: |
           terraform ${{ github.event.inputs.action }} -auto-approve
 
-      # Step 7: Get Clean Terraform outputs
+     # Step 7: Get Clean Terraform outputs
       - name: Capture Outputs
         if: github.event.inputs.action == 'apply'
         id: tf-outputs
         run: |
-          # Get raw output and clean it
-          ECR_REPO_URL=$(terraform output -raw ecr_repository_url | grep -Eo '[a-zA-Z0-9./:-]+' | head -1)
+          # Get and clean ECR repository URL
+          ECR_REPO_URL=$(terraform output -json | jq -r '.ecr_repository_url.value' | tr -d '\n')
+          if [ -z "$ECR_REPO_URL" ]; then
+            echo "::error::Failed to get ECR repository URL"
+            exit 1
+          fi
+          
+          # Get other outputs
           ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name | tr -d '\n')
           ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name | tr -d '\n')
           
@@ -72,6 +78,7 @@ jobs:
           echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
           echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
           echo "ECR_REPO_NAME=$(echo "${ECR_REPO_URL}" | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
+          echo "Extracted ECR URL: ${ECR_REPO_URL}"
 
       # Step 8: Login to Amazon ECR
       - name: Login to Amazon ECR
@@ -80,27 +87,30 @@ jobs:
         with:
           mask-password: true
 
-      # Step 9: Build and Push Docker Image (Fixed Version)
+      # Step 9: Build and Push Docker Image
       - name: Build and Push Docker Image
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
-          # Clean and verify ECR repository URL
-          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/[^a-zA-Z0-9\/\.:-]//g')
-          echo "Building Docker image for ECR repository: ${ECR_REPO_URL}"
+          # Verify ECR repository URL
+          ECR_REPO_URL="${{ steps.tf-outputs.outputs.ECR_REPO_URL }}"
+          if [[ ! "$ECR_REPO_URL" =~ ^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-zA-Z0-9_-]+$ ]]; then
+            echo "::error::Invalid ECR repository URL format: ${ECR_REPO_URL}"
+            exit 1
+          fi
           
-          # Set up Docker Buildx with ECR authentication
+          echo "Building and pushing to: ${ECR_REPO_URL}"
+          
+          # Set up Docker Buildx
           docker buildx create --use
-          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login \
-            --username AWS \
-            --password-stdin ${ECR_REPO_URL%/*}
           
-          # Build and push to ECR only
+          # Build and push
           docker buildx build \
             --platform linux/amd64 \
             -t "${ECR_REPO_URL}:latest" \
             --push \
-            --provenance=false \
             .
+          
+          echo "Successfully pushed to ECR"
           
           echo "Successfully pushed to ${ECR_REPO_URL}:latest"
       # Step 10: Start ECR Image Scan
