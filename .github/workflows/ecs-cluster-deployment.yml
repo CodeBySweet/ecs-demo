@@ -29,6 +29,9 @@ jobs:
     name: Terraform Operations
     runs-on: ubuntu-latest
     environment: production
+    outputs:
+      plan_status: ${{ steps.plan.outputs.status || 'skipped' }}
+      apply_status: ${{ steps.apply.outputs.status || 'skipped' }}
 
     steps:
     # ----------------------------------
@@ -93,7 +96,7 @@ jobs:
         terraform plan \
           -input=false \
           -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        echo "PLAN_STATUS=success" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
         
     - name: Terraform Apply
       id: apply
@@ -104,7 +107,7 @@ jobs:
           -input=false \
           -auto-approve \
           -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        echo "APPLY_STATUS=success" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
 
     - name: Terraform Destroy
       id: destroy
@@ -123,8 +126,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.terraform_action != 'destroy' &&
-      (needs.terraform.outputs.PLAN_STATUS == 'success' ||
-       needs.terraform.outputs.APPLY_STATUS == 'success')
+      (needs.terraform.outputs.apply_status == 'success' ||
+       (github.event.inputs.terraform_action == 'plan' && needs.terraform.outputs.plan_status == 'success'))
 
     steps:
     # ----------------------------------
