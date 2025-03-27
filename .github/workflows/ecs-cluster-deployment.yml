@@ -267,32 +267,7 @@ jobs:
         echo "LOW=$LOW" >> $GITHUB_ENV
 
     # ----------------------------------
-    # Step 9: Generate Scan Report
-    # ----------------------------------
-    - name: Create Scan Report
-      if: always()
-      run: |
-        aws ecr describe-image-scan-findings \
-          --repository-name $ECR_REPOSITORY \
-          --image-id imageTag=$IMAGE_TAG \
-          --region $AWS_REGION \
-          --output json > scan-report.json
-        
-        echo "Scan report saved as artifact"
-
-    # ----------------------------------
-    # Step 10: Upload Scan Artifact
-    # ----------------------------------
-    - name: Upload Security Report
-      if: always()
-      uses: actions/upload-artifact@v3
-      with:
-        name: ecr-scan-report-${{ github.sha }}
-        path: scan-report.json
-        retention-days: 7
-
-    # ----------------------------------
-    # Step 11: Deploy to ECS (if scan passed)
+    # Step 9: Deploy to ECS (if scan passed)
     # ----------------------------------
     - name: Deploy to ECS
       if: steps.check-vulnerabilities.outcome == 'success'
