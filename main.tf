@@ -125,7 +125,7 @@ resource "aws_ecs_task_definition" "my_task" {
 
       # Health check configuration
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:80/health || exit 1"]
+        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
         interval    = 30
         retries     = 5
         startPeriod = 120

@@ -58,46 +58,40 @@ jobs:
             terraform apply -auto-approve
           else
             terraform destroy -auto-approve
-          fi  
+          fi
 
-      # Step 7: Check if action is 'apply'
-      - name: Check if action is 'apply'
-        id: check-action
-        run: echo "should_run=${{ github.event.inputs.action == 'apply' }}" >> $GITHUB_ENV
-
-      # Step 8: Get Terraform outputs (only if action is 'apply')
+      # Step 7: Get Terraform outputs (only if action is 'apply')
       - name: Get Terraform Outputs
-        if: steps.check-action.outputs.should_run == 'true'
+        if: github.event.inputs.action == 'apply'
         id: terraform-outputs
         run: |
           echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
           echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
           echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
 
-      # Step 9: Login to Amazon ECR
+      # Step 8: Login to Amazon ECR
       - name: Log in to Amazon ECR
-        id: login-ecr
+        if: github.event.inputs.action == 'apply'
         uses: aws-actions/amazon-ecr-login@v1
         with:
           region: ${{ env.AWS_REGION }}
 
-
-      # Step 10: Build and push Docker image
+      # Step 9: Build and push Docker image
       - name: Build and Push Docker Image
-        if: env.should_run == 'true'
+        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
         run: |
-          docker build -t $ECR_REPOSITORY_URL:latest .
-          docker push $ECR_REPOSITORY_URL:latest
+          docker build -t ${{ env.ECR_REPOSITORY_URL }}:latest .
+          docker push ${{ env.ECR_REPOSITORY_URL }}:latest
 
-      # Step 11: Start ECR image scan
+      # Step 10: Start ECR image scan
       - name: Start ECR Image Scan
-        if: env.should_run == 'true'
+        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
         run: |
           aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=latest --region $AWS_REGION
 
-      # Step 12: Wait for ECR scan to complete
+      # Step 11: Wait for ECR scan to complete
       - name: Wait for ECR Scan Completion
-        if: env.should_run == 'true'
+        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
         run: |
           for i in {1..18}; do
             SCAN_STATUS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY --image-id imageTag=latest --region $AWS_REGION --query 'imageScanStatus.status' --output text || echo "NOT_FOUND")
@@ -111,8 +105,8 @@ jobs:
           done
           echo "Scan did not complete in time. Proceeding anyway."
 
-      # Step 13: Deploy updated image to ECS
+      # Step 12: Deploy updated image to ECS
       - name: Force ECS Deployment
-        if: env.should_run == 'true'
+        if: github.event.inputs.action == 'apply' && env.ECS_CLUSTER_NAME && env.ECS_SERVICE_NAME
         run: |
           aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $ECS_SERVICE_NAME --force-new-deployment --region $AWS_REGION
