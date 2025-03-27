@@ -88,7 +88,11 @@ jobs:
       if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform plan -input=false -out=tfplan
+        terraform plan \
+          -input=false \
+          -out=tfplan \
+          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}" \
+          -var="other_variable=value"
         echo "PLAN_STATUS=success" >> $GITHUB_ENV
 
     - name: Terraform Apply
