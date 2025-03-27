@@ -58,19 +58,20 @@ jobs:
         run: |
           terraform ${{ github.event.inputs.action }} -auto-approve
 
-      # Step 7: Get Terraform outputs
+      # Step 7: Get Clean Terraform outputs
       - name: Capture Outputs
         if: github.event.inputs.action == 'apply'
         id: tf-outputs
         run: |
-          ECR_REPO_URL=$(terraform output -raw ecr_repository_url | tr -d '\n')
+          # Get raw output and clean it
+          ECR_REPO_URL=$(terraform output -raw ecr_repository_url | grep -Eo '[a-zA-Z0-9./:-]+' | head -1)
           ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name | tr -d '\n')
           ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name | tr -d '\n')
           
           echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_OUTPUT
           echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
           echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
-          echo "ECR_REPO_NAME=$(echo ${ECR_REPO_URL} | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
+          echo "ECR_REPO_NAME=$(echo "${ECR_REPO_URL}" | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
 
       # Step 8: Login to Amazon ECR
       - name: Login to Amazon ECR
@@ -83,9 +84,9 @@ jobs:
       - name: Build and Push Docker Image
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
-          # First, clean and verify the ECR repository URL
-          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/[^a-zA-Z0-9\/\.:-]//g')
-          echo "Building Docker image for repository: ${ECR_REPO_URL}"
+          # Verify and clean the ECR URL again
+          CLEAN_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | grep -Eo '[a-zA-Z0-9./:-]+' | head -1)
+          echo "Building Docker image for repository: ${CLEAN_REPO_URL}"
           
           # Set up Docker Buildx
           docker buildx create --use
@@ -93,7 +94,7 @@ jobs:
           # Build and push the image
           docker buildx build \
             --platform linux/amd64 \
-            -t "${ECR_REPO_URL}:latest" \
+            -t "${CLEAN_REPO_URL}:latest" \
             --push \
             .
 
