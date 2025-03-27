@@ -64,12 +64,21 @@ jobs:
         if: github.event.inputs.action == 'apply'
         id: terraform-outputs
         run: |
-          # Get all outputs as JSON
+          # Get all outputs as JSON and debug
+          echo "Getting Terraform outputs..."
           OUTPUTS=$(terraform output -json)
+          echo "Raw outputs:"
+          echo "$OUTPUTS"
+          
+          # Check if outputs exist
+          if [ -z "$OUTPUTS" ]; then
+            echo "No outputs found"
+            exit 1
+          fi
           
           # Parse JSON to get clean values
-          ECR_REPO_URL=$(echo $OUTPUTS | jq -r '.ecr_repository_url.value')
-          ECR_REPO_NAME=$(echo $ECR_REPO_URL | cut -d'/' -f2)
+          ECR_REPO_URL=$(echo "$OUTPUTS" | jq -r '.ecr_repository_url.value')
+          ECR_REPO_NAME=$(echo "$ECR_REPO_URL" | cut -d'/' -f2)
           
           # Set environment variables
           echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_ENV
@@ -103,10 +112,10 @@ jobs:
 
       # Step 11: Wait for ECR scan to complete
       - name: Wait for ECR Scan Completion
-        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
+        if: github.event.inputs.action == 'apply' && env.ECR_REPO_URL
         run: |
           for i in {1..18}; do
-            SCAN_STATUS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPOSITORY --image-id imageTag=latest --region $AWS_REGION --query 'imageScanStatus.status' --output text || echo "NOT_FOUND")
+            SCAN_STATUS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPO_NAME --image-id imageTag=latest --region $AWS_REGION --query 'imageScanStatus.status' --output text || echo "NOT_FOUND")
             if [[ "$SCAN_STATUS" == "COMPLETE" ]]; then
               echo "Scan completed successfully."; exit 0;
             elif [[ "$SCAN_STATUS" == "FAILED" ]]; then
