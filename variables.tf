@@ -62,3 +62,9 @@ variable "sns_topic_arn" {
   description = "ARN for SNS topic for alarms"
   type        = string
 }
+
+variable "another_variable" {
+  description = "Example of another variable"
+  type        = string
+  default     = "default_value" 
+}
