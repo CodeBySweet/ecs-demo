@@ -65,9 +65,10 @@ jobs:
         id: check-action
         run: echo "should_run=${{ github.event.inputs.action == 'apply' }}" >> $GITHUB_ENV
 
-      # Step 8: Retrieve Terraform outputs (if action is 'apply')
+      # Step 8: Get Terraform outputs (only if action is 'apply')
       - name: Get Terraform Outputs
-        if: env.should_run == 'true'
+        if: steps.check-action.outputs.should_run == 'true'
+        id: terraform-outputs
         run: |
           echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
           echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
