@@ -59,33 +59,18 @@ jobs:
             terraform destroy -auto-approve
           fi
 
-      # Step 7: Get Terraform outputs (updated)
+      # Step 7: Get Terraform outputs
       - name: Get Terraform Outputs
         if: github.event.inputs.action == 'apply'
-        id: terraform-outputs
         run: |
-          # Get all outputs as JSON and debug
-          echo "Getting Terraform outputs..."
-          OUTPUTS=$(terraform output -json)
-          echo "Raw outputs:"
-          echo "$OUTPUTS"
+          ECR_REPO_URL=$(terraform output -raw ecr_repository_url)
+          ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)
+          ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)
           
-          # Check if outputs exist
-          if [ -z "$OUTPUTS" ]; then
-            echo "No outputs found"
-            exit 1
-          fi
-          
-          # Parse JSON to get clean values
-          ECR_REPO_URL=$(echo "$OUTPUTS" | jq -r '.ecr_repository_url.value')
-          ECR_REPO_NAME=$(echo "$ECR_REPO_URL" | cut -d'/' -f2)
-          
-          # Set environment variables
           echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_ENV
-          echo "ECR_REPO_NAME=${ECR_REPO_NAME}" >> $GITHUB_ENV
-          
-          echo "Repository URL: ${ECR_REPO_URL}"
-          echo "Repository Name: ${ECR_REPO_NAME}"
+          echo "ECR_REPO_NAME=$(echo $ECR_REPO_URL | cut -d'/' -f2)" >> $GITHUB_ENV
+          echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_ENV
+          echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_ENV
 
       # Step 8: Login to Amazon ECR
       - name: Log in to Amazon ECR
@@ -128,6 +113,11 @@ jobs:
 
       # Step 12: Deploy updated image to ECS
       - name: Force ECS Deployment
-        if: github.event.inputs.action == 'apply' && env.ECS_CLUSTER_NAME && env.ECS_SERVICE_NAME
+        if: github.event.inputs.action == 'apply' && env.ECS_CLUSTER_NAME != '' && env.ECS_SERVICE_NAME != ''
         run: |
-          aws ecs update-service --cluster $ECS_CLUSTER_NAME --service $ECS_SERVICE_NAME --force-new-deployment --region $AWS_REGION
+          echo "Redeploying ECS service ${ECS_SERVICE_NAME} in cluster ${ECS_CLUSTER_NAME}"
+          aws ecs update-service \
+            --cluster $ECS_CLUSTER_NAME \
+            --service $ECS_SERVICE_NAME \
+            --force-new-deployment \
+            --region $AWS_REGION
