@@ -80,24 +80,29 @@ jobs:
         with:
           mask-password: true
 
-      # Step 9: Build and Push Docker Image
+      # Step 9: Build and Push Docker Image (Fixed Version)
       - name: Build and Push Docker Image
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
-          # Verify and clean the ECR URL again
-          CLEAN_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | grep -Eo '[a-zA-Z0-9./:-]+' | head -1)
-          echo "Building Docker image for repository: ${CLEAN_REPO_URL}"
+          # Clean and verify ECR repository URL
+          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/[^a-zA-Z0-9\/\.:-]//g')
+          echo "Building Docker image for ECR repository: ${ECR_REPO_URL}"
           
-          # Set up Docker Buildx
+          # Set up Docker Buildx with ECR authentication
           docker buildx create --use
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} | docker login \
+            --username AWS \
+            --password-stdin ${ECR_REPO_URL%/*}
           
-          # Build and push the image
+          # Build and push to ECR only
           docker buildx build \
             --platform linux/amd64 \
-            -t "${CLEAN_REPO_URL}:latest" \
+            -t "${ECR_REPO_URL}:latest" \
             --push \
+            --provenance=false \
             .
-
+          
+          echo "Successfully pushed to ${ECR_REPO_URL}:latest"
       # Step 10: Start ECR Image Scan
       - name: Start ECR Image Scan
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_NAME
