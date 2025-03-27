@@ -62,7 +62,7 @@ jobs:
       # Step 7: Get Terraform outputs
       - name: Capture Outputs
         if: github.event.inputs.action == 'apply'
-        id: outputs
+        id: tf-outputs
         run: |
           ECR_REPO_URL=$(terraform output -raw ecr_repository_url | tr -d '\n')
           ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name | tr -d '\n')
@@ -71,51 +71,40 @@ jobs:
           echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_OUTPUT
           echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
           echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
+          echo "ECR_REPO_NAME=$(echo ${ECR_REPO_URL} | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
 
       # Step 8: Login to Amazon ECR
-      - name: Login to ECR
+      - name: Login to Amazon ECR
         if: github.event.inputs.action == 'apply'
         uses: aws-actions/amazon-ecr-login@v1
         with:
-          region: ${{ env.AWS_REGION }}
+          mask-password: true
 
       # Step 9: Build and Push Docker Image
       - name: Build and Push Docker Image
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
-          # Properly extract and sanitize the ECR repo URL
-          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/::debug::.*//')
-          
-          echo "Building Docker image with repository: ${ECR_REPO_URL}"
-          docker build -t ${ECR_REPO_URL}:latest .
-          
-          echo "Pushing Docker image..."
-          docker push ${ECR_REPO_URL}:latest
+          docker buildx build \
+            --platform linux/amd64 \
+            -t ${{ steps.tf-outputs.outputs.ECR_REPO_URL }}:latest \
+            --push .
 
       # Step 10: Start ECR Image Scan
       - name: Start ECR Image Scan
-        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
+        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_NAME
         run: |
-          # Extract just the repository name from the full URL
-          FULL_REPO_URL="${{ steps.tf-outputs.outputs.ECR_REPO_URL }}"
-          REPO_NAME=$(echo "${FULL_REPO_URL}" | awk -F/ '{print $2}')
-          
-          echo "Starting scan for repository: ${REPO_NAME}"
           aws ecr start-image-scan \
-            --repository-name "${REPO_NAME}" \
+            --repository-name ${{ steps.tf-outputs.outputs.ECR_REPO_NAME }} \
             --image-id imageTag=latest \
             --region ${{ env.AWS_REGION }}
-          
-          echo "Successfully initiated scan for ${REPO_NAME}"
 
-      # Step 11: Wait for ECR scan to complete
-      - name: Await Scan Results
-        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
+      # Step 11: Wait for ECR Scan Completion
+      - name: Wait for ECR Scan Completion
+        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_NAME
         run: |
-          REPO_NAME=$(echo ${{ steps.outputs.outputs.ECR_REPO_URL }} | cut -d'/' -f2)
           for ((i=1; i<=${{ env.MAX_SCAN_ATTEMPTS }}; i++)); do
             STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name $REPO_NAME \
+              --repository-name ${{ steps.tf-outputs.outputs.ECR_REPO_NAME }} \
               --image-id imageTag=latest \
               --region ${{ env.AWS_REGION }} \
               --query 'imageScanStatus.status' \
@@ -130,12 +119,12 @@ jobs:
           done
           echo "Scan timeout reached - proceeding with deployment"
 
-      # Step 12: Force new ECS deployment
+      # Step 12: Force ECS Deployment
       - name: Force ECS Deployment
-        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECS_CLUSTER_NAME && steps.outputs.outputs.ECS_SERVICE_NAME
+        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECS_CLUSTER_NAME && steps.tf-outputs.outputs.ECS_SERVICE_NAME
         run: |
           aws ecs update-service \
-            --cluster ${{ steps.outputs.outputs.ECS_CLUSTER_NAME }} \
-            --service ${{ steps.outputs.outputs.ECS_SERVICE_NAME }} \
+            --cluster ${{ steps.tf-outputs.outputs.ECS_CLUSTER_NAME }} \
+            --service ${{ steps.tf-outputs.outputs.ECS_SERVICE_NAME }} \
             --force-new-deployment \
             --region ${{ env.AWS_REGION }}
