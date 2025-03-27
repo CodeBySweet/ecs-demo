@@ -64,11 +64,13 @@ jobs:
         if: github.event.inputs.action == 'apply'
         id: outputs
         run: |
-          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
-          echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_OUTPUT
-          echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_OUTPUT
-        env:
-          GITHUB_OUTPUT: $GITHUB_OUTPUT
+          ECR_REPO_URL=$(terraform output -raw ecr_repository_url | tr -d '\n')
+          ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name | tr -d '\n')
+          ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name | tr -d '\n')
+          
+          echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_OUTPUT
+          echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
+          echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
 
       # Step 8: Login to Amazon ECR
       - name: Login to ECR
