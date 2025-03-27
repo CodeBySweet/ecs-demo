@@ -176,7 +176,16 @@ jobs:
           aws ecr get-login-password --region $AWS_REGION | \
             docker login --username AWS --password-stdin $ECR_REGISTRY
 
-      # Step 13: Set up Docker Buildx
+      # Step 13: Build and Push Docker Image
+      - name: Build and Push Docker Image
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          docker build -t $ECR_REPOSITORY .
+          docker tag $ECR_REPOSITORY:latest $ECR_REPOSITORY_URL:latest
+          aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ECR_REPOSITORY_URL
+          docker push $ECR_REPOSITORY_URL:latest
+
+      # Step 14: Set up Docker Buildx
       - name: Set up Docker Buildx
         if: steps.check-action.outputs.should_run == 'true'
         uses: docker/setup-buildx-action@v2
@@ -192,7 +201,7 @@ jobs:
         id: get-timestamp
         run: echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
 
-      # Step 14: Build and push image with ONLY the 'latest' tag
+      # Step 15: Build and push image with ONLY the 'latest' tag
       - name: Build, tag, and push Docker image
         if: steps.check-action.outputs.should_run == 'true'
         run: |
@@ -202,8 +211,7 @@ jobs:
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             -f Dockerfile .
 
-
-      # Step 15: Enhanced ECR scan check with delay and OCI support
+      # Step 16: Enhanced ECR scan check with delay and OCI support
       - name: Start ECR image scan
         if: steps.check-action.outputs.should_run == 'true'
         run: |
@@ -240,7 +248,7 @@ jobs:
             echo "Skipping scan: Unsupported manifest type ($IMAGE_TYPE)"
           fi
 
-      # Step 16: Verify ECR scan completion
+      # Step 17: Verify ECR scan completion
       - name: Verify ECR scan completion
         if: steps.check-action.outputs.should_run == 'true'
         continue-on-error: true  # Continue even if scan fails or times out
@@ -291,7 +299,7 @@ jobs:
             echo "🕒 Scan timed out - proceeding with deployment anyway"
           fi
 
-      # Step 17: Force new ECS deployment with the new image
+      # Step 18: Force new ECS deployment with the new image
       - name: Force new ECS deployment
         if: steps.check-action.outputs.should_run == 'true'
         run: |
