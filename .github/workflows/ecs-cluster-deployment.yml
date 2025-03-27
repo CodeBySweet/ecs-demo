@@ -117,6 +117,15 @@ jobs:
           -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
         echo "DESTROY_STATUS=success" >> $GITHUB_ENV
 
+  build-scan-deploy:
+    name: Build, Scan, Deploy
+    needs: terraform
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.terraform_action != 'destroy' &&
+      (needs.terraform.outputs.PLAN_STATUS == 'success' ||
+       needs.terraform.outputs.APPLY_STATUS == 'success')
+
     steps:
     # ----------------------------------
     # Step 1: Checkout the code
