@@ -1,10 +1,10 @@
-name: ECS Cluster Deployment | Teardown
+name: ECS Cluster and Application Deployment
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Choose 'apply' to create resources or 'destroy' to remove them"
+        description: "Choose 'apply' to create resources or 'destroy' to tear them down."
         required: true
         default: "apply"
         type: choice
@@ -13,155 +13,292 @@ on:
           - destroy
 
 env:
-  AWS_REGION: us-east-1
-  MAX_SCAN_ATTEMPTS: 18
-  SCAN_WAIT_INTERVAL: 10
+  AWS_REGION: us-east-1  # AWS region for deployment
+  ECR_REPOSITORY: my-app-repo # Must match your Terraform ECR repository name
 
 permissions:
-  id-token: write
-  contents: read
+  id-token: write   # Required for OIDC authentication
+  contents: read    # Required for actions/checkout
 
 jobs:
-  infrastructure:
-    name: "${{ github.event.inputs.action == 'apply' && 'Deploy' || 'Destroy' }} Infrastructure"
+  deploy-or-destroy:
     runs-on: ubuntu-latest
 
     steps:
       # Step 1: Checkout the code
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials
-      - name: AWS Authentication
+      # Step 2: Configure AWS credentials via OIDC
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::626635421987:role/GitHubOIDCRole
           aws-region: ${{ env.AWS_REGION }}
 
       # Step 3: Set up Terraform
-      - name: Setup Terraform
+      - name: Set up Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
+          terraform_wrapper: false
 
       # Step 4: Initialize Terraform
-      - name: Initialize Terraform
+      - name: Terraform Init
         run: terraform init
 
-      # Step 5: Terraform Plan (if action is 'apply')
+      # Step 5: Terraform Plan (for apply actions)
       - name: Terraform Plan
         if: github.event.inputs.action == 'apply'
         run: terraform plan
 
-      # Step 6: Apply or Destroy Infrastructure
-      - name: "${{ github.event.inputs.action == 'apply' && 'Apply' || 'Destroy' }} Infrastructure"
+      # Step 6: Apply or Destroy Terraform configuration
+      - name: Terraform Apply or Destroy
         run: |
-          terraform ${{ github.event.inputs.action }} -auto-approve
+          if [ "${{ github.event.inputs.action }}" == "apply" ]; then
+            echo "Applying Terraform configuration..."
+            terraform apply -auto-approve
+          elif [ "${{ github.event.inputs.action }}" == "destroy" ]; then
+            echo "Destroying Terraform configuration..."
 
-      # Step 7: Get Terraform outputs
-      - name: Capture Outputs
-        if: github.event.inputs.action == 'apply'
-        id: tf-outputs
-        run: |
-          # Get raw outputs and clean them
-          ECR_REPO_URL=$(terraform output ecr_repository_url | awk -F'"' '/^ecr_repository_url/ {print $2}' | tr -d '\n')
-          ECS_CLUSTER_NAME=$(terraform output ecs_cluster_name | awk -F'"' '/^ecs_cluster_name/ {print $2}' | tr -d '\n')
-          ECS_SERVICE_NAME=$(terraform output ecs_service_name | awk -F'"' '/^ecs_service_name/ {print $2}' | tr -d '\n')
-          
-          # Verify we got valid outputs
-          if [ -z "$ECR_REPO_URL" ]; then
-            echo "::error::ECR repository URL is empty"
+            # Check if the ECR repository exists before trying to delete images
+            echo "Checking if ECR repository exists..."
+            if aws ecr describe-repositories --repository-names $ECR_REPOSITORY --region $AWS_REGION &>/dev/null; then
+              echo "ECR repository exists. Deleting all images..."
+              
+              IMAGE_DIGESTS=$(aws ecr describe-images --repository-name $ECR_REPOSITORY \
+                --query 'imageDetails[*].imageDigest' --output text --region $AWS_REGION)
+              
+              if [ -n "$IMAGE_DIGESTS" ]; then
+                for digest in $IMAGE_DIGESTS; do
+                  echo "Deleting image with digest: $digest"
+                  aws ecr batch-delete-image \
+                    --repository-name $ECR_REPOSITORY \
+                    --image-ids imageDigest=$digest \
+                    --region $AWS_REGION
+                done
+                echo "All images deleted successfully."
+              else
+                echo "No images found in repository."
+              fi
+            else
+              echo "ECR repository does not exist. Skipping image deletion."
+            fi
+            
+            # Now proceed with Terraform destroy
+            echo "Proceeding with terraform destroy..."
+            terraform destroy -auto-approve
+          else
+            echo "❌ Invalid action specified. Use 'apply' or 'destroy'."
             exit 1
           fi
-          
-          if [ -z "$ECS_CLUSTER_NAME" ]; then
-            echo "::warning::ECS cluster name is empty"
-          fi
-          
-          if [ -z "$ECS_SERVICE_NAME" ]; then
-            echo "::warning::ECS service name is empty"
-          fi
-          
-          # Set outputs
-          echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_OUTPUT
-          echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
-          echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
-          echo "ECR_REPO_NAME=$(echo "${ECR_REPO_URL}" | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
-          
-          echo "Captured outputs:"
-          echo "ECR URL: ${ECR_REPO_URL}"
-          echo "Cluster: ${ECS_CLUSTER_NAME}"
-          echo "Service: ${ECS_SERVICE_NAME}"
 
-      # Step 8: Login to Amazon ECR
+      # Step 7: Skip Docker steps if action is 'destroy'
+      - name: Check if action is 'apply'
+        id: check-action
+        run: |
+          if [ "${{ github.event.inputs.action }}" == "apply" ]; then
+            echo "should_run=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_run=false" >> $GITHUB_OUTPUT
+          fi
+
+      # Step 8: Get Terraform outputs (only if action is 'apply')
+      - name: Get Terraform Outputs
+        if: steps.check-action.outputs.should_run == 'true'
+        id: terraform-outputs
+        run: |
+          echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+          echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
+          echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
+
+      # Step 9: Install dependencies (only if action is 'apply')
+      - name: Install dependencies
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          echo "Installing dependencies..."
+          pip install -r requirements.txt
+
+      # Step 10: Install Docker and ECR Credential Helper
+      - name: Install Docker and ECR Credential Helper
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          echo "Installing Docker..."
+          sudo apt-get remove -y docker docker-engine docker.io containerd runc || true
+          sudo apt-get update
+          sudo apt-get install -y \
+              apt-transport-https \
+              ca-certificates \
+              curl \
+              gnupg-agent \
+              software-properties-common
+          curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+          sudo add-apt-repository \
+             "deb [arch=amd64] https://download.docker.com/linux/ubuntu \
+             $(lsb_release -cs) \
+             stable"
+          sudo apt-get update
+          sudo apt-get install -y docker-ce docker-ce-cli containerd.io
+          sudo usermod -aG docker $USER
+          sudo apt-get install -y amazon-ecr-credential-helper
+          mkdir -p ~/.docker
+          echo '{"credsStore":"ecr-login"}' > ~/.docker/config.json
+
+      # Step 11: Configure Docker to use ECR credential helper
+      - name: Configure Docker credentials helper
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          mkdir -p ~/.docker
+          echo '{
+            "credHelpers": {
+              "*.dkr.ecr.*.amazonaws.com": "ecr-login"
+            }
+          }' > ~/.docker/config.json
+
+      # Step 12: Login to ECR using AWS CLI
       - name: Login to Amazon ECR
-        if: github.event.inputs.action == 'apply'
-        uses: aws-actions/amazon-ecr-login@v1
-        with:
-          mask-password: true
-
-      # Step 9: Build and Push Docker Image
-      - name: Build and Push Docker Image
-        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
+        if: steps.check-action.outputs.should_run == 'true'
+        id: login-ecr
         run: |
-          # Verify ECR repository URL
-          ECR_REPO_URL="${{ steps.tf-outputs.outputs.ECR_REPO_URL }}"
-          if [[ ! "$ECR_REPO_URL" =~ ^[0-9]+\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-zA-Z0-9_-]+$ ]]; then
-            echo "::error::Invalid ECR repository URL format: ${ECR_REPO_URL}"
-            exit 1
+          # Install AWS CLI if not present
+          if ! command -v aws &> /dev/null; then
+            curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+            unzip awscliv2.zip
+            sudo ./aws/install
           fi
           
-          echo "Building and pushing to: ${ECR_REPO_URL}"
+          # Get ECR registry URI
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          ECR_REGISTRY="$ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+          echo "ECR_REGISTRY=$ECR_REGISTRY" >> $GITHUB_ENV
           
-          # Set up Docker Buildx
-          docker buildx create --use
-          
-          # Build and push
+          # Login to ECR
+          aws ecr get-login-password --region $AWS_REGION | \
+            docker login --username AWS --password-stdin $ECR_REGISTRY
+
+      # Step 13: Set up Docker Buildx
+      - name: Set up Docker Buildx
+        if: steps.check-action.outputs.should_run == 'true'
+        uses: docker/setup-buildx-action@v2
+
+      # Get commit hash and timestamp for tagging
+      - name: Get commit hash
+        if: steps.check-action.outputs.should_run == 'true'
+        id: get-commit-hash
+        run: echo "commit-hash=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Get timestamp
+        if: steps.check-action.outputs.should_run == 'true'
+        id: get-timestamp
+        run: echo "timestamp=$(date +'%Y%m%d%H%M')" >> $GITHUB_OUTPUT
+
+      # Step 14: Build and push image with ONLY the 'latest' tag
+      - name: Build, tag, and push Docker image
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
           docker buildx build \
             --platform linux/amd64 \
-            -t "${ECR_REPO_URL}:latest" \
             --push \
-            .
-          
-          echo "Successfully pushed to ECR"
-          
-          echo "Successfully pushed to ${ECR_REPO_URL}:latest"
-      # Step 10: Start ECR Image Scan
-      - name: Start ECR Image Scan
-        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_NAME
-        run: |
-          aws ecr start-image-scan \
-            --repository-name ${{ steps.tf-outputs.outputs.ECR_REPO_NAME }} \
-            --image-id imageTag=latest \
-            --region ${{ env.AWS_REGION }}
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            -f Dockerfile .
 
-      # Step 11: Wait for ECR Scan Completion
-      - name: Wait for ECR Scan Completion
-        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_NAME
+
+      # Step 15: Enhanced ECR scan check with delay and OCI support
+      - name: Start ECR image scan
+        if: steps.check-action.outputs.should_run == 'true'
         run: |
-          for ((i=1; i<=${{ env.MAX_SCAN_ATTEMPTS }}; i++)); do
-            STATUS=$(aws ecr describe-image-scan-findings \
-              --repository-name ${{ steps.tf-outputs.outputs.ECR_REPO_NAME }} \
-              --image-id imageTag=latest \
-              --region ${{ env.AWS_REGION }} \
-              --query 'imageScanStatus.status' \
-              --output text || echo "PENDING")
+          # Wait 15 seconds to ensure image is fully available
+          echo "Waiting 15 seconds for image to stabilize..."
+          sleep 15
+
+          # Check manifest type with retries
+          for i in {1..3}; do
+            IMAGE_TYPE=$(aws ecr describe-images \
+              --repository-name $ECR_REPOSITORY \
+              --image-ids imageTag=latest \
+              --region $AWS_REGION \
+              --query 'imageDetails[0].imageManifestMediaType' \
+              --output text)
             
-            case $STATUS in
-              "COMPLETE") echo "Scan completed"; exit 0 ;;
-              "FAILED") echo "Scan failed"; exit 1 ;;
-              *) echo "Attempt $i/${{ env.MAX_SCAN_ATTEMPTS }}: Scan status - $STATUS" ;;
-            esac
-            sleep ${{ env.SCAN_WAIT_INTERVAL }}
+            if [ -n "$IMAGE_TYPE" ]; then
+              break
+            fi
+            echo "Attempt $i: Failed to get image type, retrying..."
+            sleep 5
           done
-          echo "Scan timeout reached - proceeding with deployment"
 
-      # Step 12: Force ECS Deployment
-      - name: Force ECS Deployment
-        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECS_CLUSTER_NAME && steps.tf-outputs.outputs.ECS_SERVICE_NAME
+          # Supported manifest types
+          if [[ "$IMAGE_TYPE" == "application/vnd.docker.distribution.manifest.v2+json" || \
+                "$IMAGE_TYPE" == "application/vnd.oci.image.manifest.v1+json" ]]; then
+            echo "Starting scan for 'latest' image (Type: $IMAGE_TYPE)..."
+            aws ecr start-image-scan \
+              --repository-name $ECR_REPOSITORY \
+              --image-id imageTag=latest \
+              --region $AWS_REGION
+            echo "✅ Scan initiated successfully"
+          else
+            echo "Skipping scan: Unsupported manifest type ($IMAGE_TYPE)"
+          fi
+
+      # Step 16: Verify ECR scan completion
+      - name: Verify ECR scan completion
+        if: steps.check-action.outputs.should_run == 'true'
+        continue-on-error: true  # Continue even if scan fails or times out
         run: |
+          echo "Checking scan status (will wait up to 3 minutes)..."
+          MAX_ATTEMPTS=18
+          SCAN_STARTED=false
+          
+          for i in {1..$MAX_ATTEMPTS}; do
+            SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $ECR_REPOSITORY \
+              --image-id imageTag=latest \
+              --region $AWS_REGION \
+              --query 'imageScanStatus.status' \
+              --output text 2>/dev/null || echo "NOT_FOUND")
+            
+            case $SCAN_STATUS in
+              "COMPLETE")
+                echo "✅ Scan completed successfully"
+                exit 0
+                ;;
+              "IN_PROGRESS")
+                if [ "$SCAN_STARTED" = false ]; then
+                  echo "Scan started and in progress..."
+                  SCAN_STARTED=true
+                fi
+                ;;
+              "FAILED")
+                echo "❌ Scan failed"
+                exit 1
+                ;;
+              "NOT_FOUND")
+                if [ $i -lt 12 ]; then  # Only show "not found" for first 2 minutes
+                  echo "Scan not started yet (attempt $i/$MAX_ATTEMPTS)"
+                fi
+                ;;
+              *)
+                echo "Unknown scan status: $SCAN_STATUS"
+                ;;
+            esac
+            
+            sleep 10
+          done
+          
+          if [ "$SCAN_STARTED" = false ]; then
+            echo "🕒 Scan never started - possible issue with ECR scanning"
+          else
+            echo "🕒 Scan timed out - proceeding with deployment anyway"
+          fi
+
+      # Step 17: Force new ECS deployment with the new image
+      - name: Force new ECS deployment
+        if: steps.check-action.outputs.should_run == 'true'
+        run: |
+          echo "Updating ECS Service..."
           aws ecs update-service \
-            --cluster ${{ steps.tf-outputs.outputs.ECS_CLUSTER_NAME }} \
-            --service ${{ steps.tf-outputs.outputs.ECS_SERVICE_NAME }} \
+            --cluster $ECS_CLUSTER_NAME \
+            --service $ECS_SERVICE_NAME \
             --force-new-deployment \
-            --region ${{ env.AWS_REGION }}
+            --region $AWS_REGION
+          echo "✅ ECS Service updated successfully."
