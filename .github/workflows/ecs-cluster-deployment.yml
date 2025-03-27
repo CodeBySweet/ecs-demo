@@ -14,7 +14,6 @@ on:
 
 env:
   AWS_REGION: us-east-1
-  ECR_REPOSITORY: my-app-repo
 
 permissions:
   id-token: write
@@ -60,14 +59,17 @@ jobs:
             terraform destroy -auto-approve
           fi
 
-      # Step 7: Get Terraform outputs (only if action is 'apply')
+      # Step 7: Get Terraform outputs (updated)
       - name: Get Terraform Outputs
         if: github.event.inputs.action == 'apply'
         id: terraform-outputs
         run: |
-          echo "ECR_REPOSITORY_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
+          echo "ECR_REPO_NAME=$(terraform output -raw ecr_repository_url | cut -d'/' -f2)" >> $GITHUB_ENV
           echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
           echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
+          echo "Extracted ECR Repo URL: $ECR_REPO_URL"  # Debug output
+          echo "Extracted ECR Repo Name: $ECR_REPO_NAME" # Debug output
 
       # Step 8: Login to Amazon ECR
       - name: Log in to Amazon ECR
@@ -76,18 +78,21 @@ jobs:
         with:
           region: ${{ env.AWS_REGION }}
 
-      # Step 9: Build and push Docker image
+      # Step 9: Build and push Docker image (updated)
       - name: Build and Push Docker Image
-        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
+        if: github.event.inputs.action == 'apply' && env.ECR_REPO_URL
         run: |
-          docker build -t ${{ env.ECR_REPOSITORY_URL }}:latest .
-          docker push ${{ env.ECR_REPOSITORY_URL }}:latest
+          docker build -t ${ECR_REPO_URL}:latest .
+          docker push ${ECR_REPO_URL}:latest
 
-      # Step 10: Start ECR image scan
+      # Step 10: Start ECR image scan (updated)
       - name: Start ECR Image Scan
-        if: github.event.inputs.action == 'apply' && env.ECR_REPOSITORY_URL
+        if: github.event.inputs.action == 'apply' && env.ECR_REPO_NAME
         run: |
-          aws ecr start-image-scan --repository-name $ECR_REPOSITORY --image-id imageTag=latest --region $AWS_REGION
+          aws ecr start-image-scan \
+            --repository-name ${ECR_REPO_NAME} \
+            --image-id imageTag=latest \
+            --region ${AWS_REGION}
 
       # Step 11: Wait for ECR scan to complete
       - name: Wait for ECR Scan Completion
