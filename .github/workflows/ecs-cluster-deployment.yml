@@ -83,10 +83,19 @@ jobs:
       - name: Build and Push Docker Image
         if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
+          # First, clean and verify the ECR repository URL
+          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/[^a-zA-Z0-9\/\.:-]//g')
+          echo "Building Docker image for repository: ${ECR_REPO_URL}"
+          
+          # Set up Docker Buildx
+          docker buildx create --use
+          
+          # Build and push the image
           docker buildx build \
             --platform linux/amd64 \
-            -t ${{ steps.tf-outputs.outputs.ECR_REPO_URL }}:latest \
-            --push .
+            -t "${ECR_REPO_URL}:latest" \
+            --push \
+            .
 
       # Step 10: Start ECR Image Scan
       - name: Start ECR Image Scan
