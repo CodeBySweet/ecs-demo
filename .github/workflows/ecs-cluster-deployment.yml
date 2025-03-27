@@ -58,27 +58,40 @@ jobs:
         run: |
           terraform ${{ github.event.inputs.action }} -auto-approve
 
-     # Step 7: Get Clean Terraform outputs
+      # Step 7: Get Terraform outputs
       - name: Capture Outputs
         if: github.event.inputs.action == 'apply'
         id: tf-outputs
         run: |
-          # Get and clean ECR repository URL
-          ECR_REPO_URL=$(terraform output -json | jq -r '.ecr_repository_url.value' | tr -d '\n')
+          # Get raw outputs and clean them
+          ECR_REPO_URL=$(terraform output ecr_repository_url | awk -F'"' '/^ecr_repository_url/ {print $2}' | tr -d '\n')
+          ECS_CLUSTER_NAME=$(terraform output ecs_cluster_name | awk -F'"' '/^ecs_cluster_name/ {print $2}' | tr -d '\n')
+          ECS_SERVICE_NAME=$(terraform output ecs_service_name | awk -F'"' '/^ecs_service_name/ {print $2}' | tr -d '\n')
+          
+          # Verify we got valid outputs
           if [ -z "$ECR_REPO_URL" ]; then
-            echo "::error::Failed to get ECR repository URL"
+            echo "::error::ECR repository URL is empty"
             exit 1
           fi
           
-          # Get other outputs
-          ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name | tr -d '\n')
-          ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name | tr -d '\n')
+          if [ -z "$ECS_CLUSTER_NAME" ]; then
+            echo "::warning::ECS cluster name is empty"
+          fi
           
+          if [ -z "$ECS_SERVICE_NAME" ]; then
+            echo "::warning::ECS service name is empty"
+          fi
+          
+          # Set outputs
           echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_OUTPUT
           echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_OUTPUT
           echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_OUTPUT
           echo "ECR_REPO_NAME=$(echo "${ECR_REPO_URL}" | awk -F/ '{print $2}')" >> $GITHUB_OUTPUT
-          echo "Extracted ECR URL: ${ECR_REPO_URL}"
+          
+          echo "Captured outputs:"
+          echo "ECR URL: ${ECR_REPO_URL}"
+          echo "Cluster: ${ECS_CLUSTER_NAME}"
+          echo "Service: ${ECS_SERVICE_NAME}"
 
       # Step 8: Login to Amazon ECR
       - name: Login to Amazon ECR
