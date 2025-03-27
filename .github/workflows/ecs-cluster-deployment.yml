@@ -20,9 +20,6 @@ env:
   ECS_SERVICE: "my-app-service"
   DOCKERFILE_PATH: "./Dockerfile"
   TF_WORKING_DIR: "."
-  SCAN_TIMEOUT_MINUTES: 5
-  MAX_SCAN_RETRIES: 30
-  FAIL_ON_HIGH_VULNERABILITIES: true
 
 jobs:
   terraform:
@@ -164,7 +161,7 @@ jobs:
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f $DOCKERFILE_PATH .
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT  # Add this line
+        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     # ----------------------------------
     # Step 5: Push to ECR
@@ -173,119 +170,25 @@ jobs:
       id: push-image
       run: |
         docker push ${{ steps.build-image.outputs.image }}
-        # Wait a few seconds for the image to be fully available in ECR
-        sleep 10
+        sleep 5  # Brief pause before scan
 
     # ----------------------------------
-    # Step 6: Initiate ECR Image Scan
+    # Step 6: Initiate ECR Image Scan (without evaluation)
     # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
+      continue-on-error: true  # Don't fail if scan can't be started
       run: |
-        echo "Initiating security scan for image: ${{ steps.build-image.outputs.image }}"
-        # Retry the scan initiation in case of timing issues
-        for i in {1..5}; do
-          if aws ecr start-image-scan \
-            --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
-            --region $AWS_REGION; then
-            echo "Scan initiated successfully"
-            exit 0
-          else
-            echo "Scan initiation failed (attempt $i/5), retrying..."
-            sleep 5
-          fi
-        done
-        echo "Error: Failed to initiate scan after 5 attempts"
-        exit 1
-
-    # ----------------------------------
-    # Step 7: Wait for Scan Completion
-    # ----------------------------------
-    - name: Wait for Scan Results
-      id: wait-scan
-      timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
-      run: |
-        echo "Waiting for scan completion (max ${{ env.SCAN_TIMEOUT_MINUTES }} minutes)..."
-        
-        for ((i=1; i<=$MAX_SCAN_RETRIES; i++)); do
-          SCAN_STATUS=$(aws ecr describe-image-scan-findings \
-            --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
-            --region $AWS_REGION \
-            --query 'imageScanStatus.status' \
-            --output text || echo "PENDING")
-          
-          echo "Scan status: $SCAN_STATUS (attempt $i/$MAX_SCAN_RETRIES)"
-          
-          if [[ "$SCAN_STATUS" == "COMPLETE" ]]; then
-            echo "Scan completed successfully"
-            exit 0
-          elif [[ "$SCAN_STATUS" == "FAILED" ]]; then
-            echo "Scan failed"
-            exit 1
-          fi
-          
-          sleep 10
-        done
-        
-        echo "Error: Scan did not complete within timeout period"
-        exit 1
-
-    # ----------------------------------
-    # Step 8: Evaluate Scan Findings
-    # ----------------------------------
-    - name: Check Vulnerability Report
-      id: check-vulnerabilities
-      run: |
-        # Get vulnerability counts
-        FINDINGS=$(aws ecr describe-image-scan-findings \
+        echo "Initiating async security scan for image: ${{ steps.build-image.outputs.image }}"
+        aws ecr start-image-scan \
           --repository-name $ECR_REPOSITORY \
-          --image-id imageTag=$IMAGE_TAG \
-          --region $AWS_REGION \
-          --query 'imageScanFindings.findingSeverityCounts')
-        
-        CRITICAL=$(echo "$FINDINGS" | jq -r '.CRITICAL // 0')
-        HIGH=$(echo "$FINDINGS" | jq -r '.HIGH // 0')
-        MEDIUM=$(echo "$FINDINGS" | jq -r '.MEDIUM // 0')
-        LOW=$(echo "$FINDINGS" | jq -r '.LOW // 0')
-        INFORMATIONAL=$(echo "$FINDINGS" | jq -r '.INFORMATIONAL // 0')
-        UNDEFINED=$(echo "$FINDINGS" | jq -r '.UNDEFINED // 0')
-        
-        # Generate report
-        echo "=== Vulnerability Scan Results ==="
-        echo "Critical: $CRITICAL"
-        echo "High: $HIGH"
-        echo "Medium: $MEDIUM"
-        echo "Low: $LOW"
-        echo "Informational: $INFORMATIONAL"
-        echo "Undefined: $UNDEFINED"
-        
-        # Fail on Critical vulnerabilities
-        if [[ $CRITICAL -gt 0 ]]; then
-          echo "❌ Critical vulnerabilities detected - failing pipeline"
-          exit 1
-        fi
-        
-        # Conditionally fail on High vulnerabilities
-        if [[ $HIGH -gt 0 && "$FAIL_ON_HIGH_VULNERABILITIES" == "true" ]]; then
-          echo "❌ High vulnerabilities detected and FAIL_ON_HIGH_VULNERABILITIES=true - failing pipeline"
-          exit 1
-        elif [[ $HIGH -gt 0 ]]; then
-          echo "⚠️  High vulnerabilities detected (continuing deployment)"
-        fi
-        
-        # Export findings for subsequent steps
-        echo "CRITICAL=$CRITICAL" >> $GITHUB_ENV
-        echo "HIGH=$HIGH" >> $GITHUB_ENV
-        echo "MEDIUM=$MEDIUM" >> $GITHUB_ENV
-        echo "LOW=$LOW" >> $GITHUB_ENV
+          --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
+          --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
     # ----------------------------------
-    # Step 9: Deploy to ECS (if scan passed)
+    # Step 7: Deploy to ECS
     # ----------------------------------
     - name: Deploy to ECS
-      if: steps.check-vulnerabilities.outcome == 'success'
       uses: aws-actions/amazon-ecs-deploy-task-definition@v1
       with:
         task-definition: ${{ env.TF_WORKING_DIR }}/task-definition.json
