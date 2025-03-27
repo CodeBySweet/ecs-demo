@@ -45,3 +45,20 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "app_desired_count" {
+  description = "Number of app tasks to run"
+  type        = number
+  default     = 1
+}
+
+variable "grafana_desired_count" {
+  description = "Number of Grafana tasks to run"
+  type        = number
+  default     = 1
+}
+
+variable "sns_topic_arn" {
+  description = "ARN for SNS topic for alarms"
+  type        = string
+}
