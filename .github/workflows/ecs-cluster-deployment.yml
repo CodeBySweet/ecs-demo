@@ -64,12 +64,19 @@ jobs:
         if: github.event.inputs.action == 'apply'
         id: terraform-outputs
         run: |
-          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_ENV
-          echo "ECR_REPO_NAME=$(terraform output -raw ecr_repository_url | cut -d'/' -f2)" >> $GITHUB_ENV
-          echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_ENV
-          echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
-          echo "Extracted ECR Repo URL: $ECR_REPO_URL"  # Debug output
-          echo "Extracted ECR Repo Name: $ECR_REPO_NAME" # Debug output
+          # Get all outputs as JSON
+          OUTPUTS=$(terraform output -json)
+          
+          # Parse JSON to get clean values
+          ECR_REPO_URL=$(echo $OUTPUTS | jq -r '.ecr_repository_url.value')
+          ECR_REPO_NAME=$(echo $ECR_REPO_URL | cut -d'/' -f2)
+          
+          # Set environment variables
+          echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_ENV
+          echo "ECR_REPO_NAME=${ECR_REPO_NAME}" >> $GITHUB_ENV
+          
+          echo "Repository URL: ${ECR_REPO_URL}"
+          echo "Repository Name: ${ECR_REPO_NAME}"
 
       # Step 8: Login to Amazon ECR
       - name: Log in to Amazon ECR
