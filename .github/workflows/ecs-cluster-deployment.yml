@@ -75,11 +75,12 @@ jobs:
           echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_ENV
 
       # Step 9: Login to Amazon ECR
-      - name: Login to Amazon ECR
-        if: env.should_run == 'true'
-        run: |
-          aws ecr get-login-password --region $AWS_REGION | \
-            docker login --username AWS --password-stdin $ECR_REPOSITORY_URL
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v1
+        with:
+          region: ${{ env.AWS_REGION }}
+
 
       # Step 10: Build and push Docker image
       - name: Build and Push Docker Image
