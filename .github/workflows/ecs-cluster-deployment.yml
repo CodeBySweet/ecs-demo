@@ -92,14 +92,21 @@ jobs:
           echo "Pushing Docker image..."
           docker push ${ECR_REPO_URL}:latest
 
-      # Step 10: Start ECR image scan
-      - name: Initiate Image Scan
-        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
+      # Step 10: Start ECR Image Scan
+      - name: Start ECR Image Scan
+        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
+          # Extract just the repository name from the full URL
+          FULL_REPO_URL="${{ steps.tf-outputs.outputs.ECR_REPO_URL }}"
+          REPO_NAME=$(echo "${FULL_REPO_URL}" | awk -F/ '{print $2}')
+          
+          echo "Starting scan for repository: ${REPO_NAME}"
           aws ecr start-image-scan \
-            --repository-name $(echo ${{ steps.outputs.outputs.ECR_REPO_URL }} | cut -d'/' -f2) \
+            --repository-name "${REPO_NAME}" \
             --image-id imageTag=latest \
             --region ${{ env.AWS_REGION }}
+          
+          echo "Successfully initiated scan for ${REPO_NAME}"
 
       # Step 11: Wait for ECR scan to complete
       - name: Await Scan Results
