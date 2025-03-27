@@ -91,10 +91,9 @@ jobs:
         terraform plan \
           -input=false \
           -out=tfplan \
-          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}" \
-          -var="other_variable=value"
+          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
         echo "PLAN_STATUS=success" >> $GITHUB_ENV
-
+        
     - name: Terraform Apply
       id: apply
       if: github.event.inputs.terraform_action == 'apply'
