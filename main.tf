@@ -232,7 +232,7 @@ resource "aws_ecs_task_definition" "grafana_task" {
   requires_compatibilities = ["FARGATE"]
   cpu                      = "1024"
   memory                   = "3072"
-  execution_role_arn       = aws_iam_role.grafana.arn
+  execution_role_arn       = aws_iam_role.grafana_role.arn
   task_role_arn            = aws_iam_role.grafana_role.arn
 
   container_definitions = jsonencode([{
