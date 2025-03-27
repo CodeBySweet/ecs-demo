@@ -176,9 +176,8 @@ jobs:
     # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
-      env:
-        IMAGE_TAG: ${{ steps.build-image.outputs.image.split(':')[1] }}
       run: |
+        IMAGE_TAG=$(echo "${{ steps.build-image.outputs.image }}" | cut -d':' -f2)
         echo "Initiating security scan for image: ${{ steps.build-image.outputs.image }}"
         aws ecr start-image-scan \
           --repository-name $ECR_REPOSITORY \
@@ -193,6 +192,7 @@ jobs:
       id: wait-scan
       timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
       run: |
+        IMAGE_TAG=$(echo "${{ steps.build-image.outputs.image }}" | cut -d':' -f2)
         echo "Waiting for scan completion (max ${{ env.SCAN_TIMEOUT_MINUTES }} minutes)..."
         
         for ((i=1; i<=$MAX_SCAN_RETRIES; i++)); do
