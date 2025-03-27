@@ -1,12 +1,10 @@
 name: ECS Cluster CI/CD Pipeline
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
     inputs:
       terraform_action:
-        description: 'Terraform action'
+        description: 'Select Terraform action to execute'
         required: true
         type: choice
         options:
@@ -23,7 +21,7 @@ env:
   DOCKERFILE_PATH: "./Dockerfile"
   TF_WORKING_DIR: "."
   SCAN_TIMEOUT_MINUTES: 5
-  MAX_SCAN_RETRIES: 30  # 30 retries * 10s = 5 minutes
+  MAX_SCAN_RETRIES: 30
   FAIL_ON_HIGH_VULNERABILITIES: true
 
 jobs:
@@ -83,17 +81,17 @@ jobs:
       run: terraform fmt -check -recursive
 
     # ----------------------------------
-    # Step 7: Conditional Terraform Plan/Apply/Destroy
+    # Step 7: Conditional Terraform Operations
     # ----------------------------------
-    - name: Terraform Plan (for push or plan action)
+    - name: Terraform Plan
       id: plan
-      if: github.event.inputs.terraform_action == 'plan' || github.event_name == 'push'
+      if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
         terraform plan -input=false -out=tfplan
         echo "PLAN_STATUS=success" >> $GITHUB_ENV
 
-    - name: Terraform Apply (for apply action)
+    - name: Terraform Apply
       id: apply
       if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
@@ -101,7 +99,7 @@ jobs:
         terraform apply -input=false -auto-approve tfplan
         echo "APPLY_STATUS=success" >> $GITHUB_ENV
 
-    - name: Terraform Destroy (for destroy action)
+    - name: Terraform Destroy
       id: destroy
       if: github.event.inputs.terraform_action == 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
