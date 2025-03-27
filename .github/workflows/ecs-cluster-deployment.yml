@@ -25,7 +25,6 @@ jobs:
   infrastructure:
     name: "${{ github.event.inputs.action == 'apply' && 'Deploy' || 'Destroy' }} Infrastructure"
     runs-on: ubuntu-latest
-    environment: production
 
     steps:
       # Step 1: Checkout the code
