@@ -164,12 +164,7 @@ jobs:
       run: |
         docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f $DOCKERFILE_PATH .
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-    # ----------------------------------
-    # Step 5: Push to ECR
-    # ----------------------------------
-    - name: Push to ECR
-      run: docker push ${{ steps.build-image.outputs.image }}
+        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT  # Add this line
 
     # ----------------------------------
     # Step 6: Initiate ECR Image Scan
@@ -177,11 +172,10 @@ jobs:
     - name: Start Image Security Scan
       id: start-scan
       run: |
-        IMAGE_TAG=$(echo "${{ steps.build-image.outputs.image }}" | cut -d':' -f2)
         echo "Initiating security scan for image: ${{ steps.build-image.outputs.image }}"
         aws ecr start-image-scan \
           --repository-name $ECR_REPOSITORY \
-          --image-id imageTag=$IMAGE_TAG \
+          --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
           --region $AWS_REGION
         echo "Scan initiated successfully"
 
@@ -192,13 +186,12 @@ jobs:
       id: wait-scan
       timeout-minutes: ${{ env.SCAN_TIMEOUT_MINUTES }}
       run: |
-        IMAGE_TAG=$(echo "${{ steps.build-image.outputs.image }}" | cut -d':' -f2)
         echo "Waiting for scan completion (max ${{ env.SCAN_TIMEOUT_MINUTES }} minutes)..."
         
         for ((i=1; i<=$MAX_SCAN_RETRIES; i++)); do
           SCAN_STATUS=$(aws ecr describe-image-scan-findings \
             --repository-name $ECR_REPOSITORY \
-            --image-id imageTag=$IMAGE_TAG \
+            --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
             --region $AWS_REGION \
             --query 'imageScanStatus.status' \
             --output text || echo "PENDING")
