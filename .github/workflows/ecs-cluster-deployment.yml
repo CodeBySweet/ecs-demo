@@ -1,10 +1,10 @@
-name: ECS Cluster and Application Deployment
+name: ECS Cluster Deployment | Teardown
 
 on:
   workflow_dispatch:
     inputs:
       action:
-        description: "Choose 'apply' to create resources or 'destroy' to tear them down."
+        description: "Choose 'apply' to create resources or 'destroy' to remove them"
         required: true
         default: "apply"
         type: choice
@@ -14,35 +14,39 @@ on:
 
 env:
   AWS_REGION: us-east-1
+  MAX_SCAN_ATTEMPTS: 18
+  SCAN_WAIT_INTERVAL: 10
 
 permissions:
   id-token: write
   contents: read
 
 jobs:
-  deploy-or-destroy:
+  infrastructure:
+    name: "${{ github.event.inputs.action == 'apply' && 'Deploy' || 'Destroy' }} Infrastructure"
     runs-on: ubuntu-latest
+    environment: production
 
     steps:
       # Step 1: Checkout the code
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
-      # Step 2: Configure AWS credentials via OIDC
-      - name: Configure AWS credentials
+      # Step 2: Configure AWS credentials
+      - name: AWS Authentication
         uses: aws-actions/configure-aws-credentials@v2
         with:
           role-to-assume: arn:aws:iam::626635421987:role/GitHubOIDCRole
           aws-region: ${{ env.AWS_REGION }}
 
       # Step 3: Set up Terraform
-      - name: Set up Terraform
+      - name: Setup Terraform
         uses: hashicorp/setup-terraform@v2
         with:
           terraform_version: 1.5.7
 
       # Step 4: Initialize Terraform
-      - name: Terraform Init
+      - name: Initialize Terraform
         run: terraform init
 
       # Step 5: Terraform Plan (if action is 'apply')
@@ -50,74 +54,73 @@ jobs:
         if: github.event.inputs.action == 'apply'
         run: terraform plan
 
-      # Step 6: Apply or Destroy Terraform configuration
-      - name: Terraform Apply or Destroy
+      # Step 6: Apply or Destroy Infrastructure
+      - name: "${{ github.event.inputs.action == 'apply' && 'Apply' || 'Destroy' }} Infrastructure"
         run: |
-          if [ "${{ github.event.inputs.action }}" == "apply" ]; then
-            terraform apply -auto-approve
-          else
-            terraform destroy -auto-approve
-          fi
+          terraform ${{ github.event.inputs.action }} -auto-approve
 
       # Step 7: Get Terraform outputs
-      - name: Get Terraform Outputs
+      - name: Capture Outputs
         if: github.event.inputs.action == 'apply'
+        id: outputs
         run: |
-          ECR_REPO_URL=$(terraform output -raw ecr_repository_url)
-          ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)
-          ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)
-          
-          echo "ECR_REPO_URL=${ECR_REPO_URL}" >> $GITHUB_ENV
-          echo "ECR_REPO_NAME=$(echo $ECR_REPO_URL | cut -d'/' -f2)" >> $GITHUB_ENV
-          echo "ECS_CLUSTER_NAME=${ECS_CLUSTER_NAME}" >> $GITHUB_ENV
-          echo "ECS_SERVICE_NAME=${ECS_SERVICE_NAME}" >> $GITHUB_ENV
+          echo "ECR_REPO_URL=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+          echo "ECS_CLUSTER_NAME=$(terraform output -raw ecs_cluster_name)" >> $GITHUB_OUTPUT
+          echo "ECS_SERVICE_NAME=$(terraform output -raw ecs_service_name)" >> $GITHUB_OUTPUT
+        env:
+          GITHUB_OUTPUT: $GITHUB_OUTPUT
 
       # Step 8: Login to Amazon ECR
-      - name: Log in to Amazon ECR
+      - name: Login to ECR
         if: github.event.inputs.action == 'apply'
         uses: aws-actions/amazon-ecr-login@v1
         with:
           region: ${{ env.AWS_REGION }}
 
-      # Step 9: Build and push Docker image (updated)
-      - name: Build and Push Docker Image
-        if: github.event.inputs.action == 'apply' && env.ECR_REPO_URL
+      # Step 9: Build and push Docker image
+      - name: Build & Push Docker Image
+        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
         run: |
-          docker build -t ${ECR_REPO_URL}:latest .
-          docker push ${ECR_REPO_URL}:latest
+          docker build -t ${{ steps.outputs.outputs.ECR_REPO_URL }}:latest .
+          docker push ${{ steps.outputs.outputs.ECR_REPO_URL }}:latest
 
-      # Step 10: Start ECR image scan (updated)
-      - name: Start ECR Image Scan
-        if: github.event.inputs.action == 'apply' && env.ECR_REPO_NAME
+      # Step 10: Start ECR image scan
+      - name: Initiate Image Scan
+        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
         run: |
           aws ecr start-image-scan \
-            --repository-name ${ECR_REPO_NAME} \
+            --repository-name $(echo ${{ steps.outputs.outputs.ECR_REPO_URL }} | cut -d'/' -f2) \
             --image-id imageTag=latest \
-            --region ${AWS_REGION}
+            --region ${{ env.AWS_REGION }}
 
       # Step 11: Wait for ECR scan to complete
-      - name: Wait for ECR Scan Completion
-        if: github.event.inputs.action == 'apply' && env.ECR_REPO_URL
+      - name: Await Scan Results
+        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
         run: |
-          for i in {1..18}; do
-            SCAN_STATUS=$(aws ecr describe-image-scan-findings --repository-name $ECR_REPO_NAME --image-id imageTag=latest --region $AWS_REGION --query 'imageScanStatus.status' --output text || echo "NOT_FOUND")
-            if [[ "$SCAN_STATUS" == "COMPLETE" ]]; then
-              echo "Scan completed successfully."; exit 0;
-            elif [[ "$SCAN_STATUS" == "FAILED" ]]; then
-              echo "Scan failed."; exit 1;
-            fi
-            echo "Waiting for scan to complete ($i/18)..."
-            sleep 10
+          REPO_NAME=$(echo ${{ steps.outputs.outputs.ECR_REPO_URL }} | cut -d'/' -f2)
+          for ((i=1; i<=${{ env.MAX_SCAN_ATTEMPTS }}; i++)); do
+            STATUS=$(aws ecr describe-image-scan-findings \
+              --repository-name $REPO_NAME \
+              --image-id imageTag=latest \
+              --region ${{ env.AWS_REGION }} \
+              --query 'imageScanStatus.status' \
+              --output text || echo "PENDING")
+            
+            case $STATUS in
+              "COMPLETE") echo "Scan completed"; exit 0 ;;
+              "FAILED") echo "Scan failed"; exit 1 ;;
+              *) echo "Attempt $i/${{ env.MAX_SCAN_ATTEMPTS }}: Scan status - $STATUS" ;;
+            esac
+            sleep ${{ env.SCAN_WAIT_INTERVAL }}
           done
-          echo "Scan did not complete in time. Proceeding anyway."
+          echo "Scan timeout reached - proceeding with deployment"
 
-      # Step 12: Deploy updated image to ECS
+      # Step 12: Force new ECS deployment
       - name: Force ECS Deployment
-        if: github.event.inputs.action == 'apply' && env.ECS_CLUSTER_NAME != '' && env.ECS_SERVICE_NAME != ''
+        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECS_CLUSTER_NAME && steps.outputs.outputs.ECS_SERVICE_NAME
         run: |
-          echo "Redeploying ECS service ${ECS_SERVICE_NAME} in cluster ${ECS_CLUSTER_NAME}"
           aws ecs update-service \
-            --cluster $ECS_CLUSTER_NAME \
-            --service $ECS_SERVICE_NAME \
+            --cluster ${{ steps.outputs.outputs.ECS_CLUSTER_NAME }} \
+            --service ${{ steps.outputs.outputs.ECS_SERVICE_NAME }} \
             --force-new-deployment \
-            --region $AWS_REGION
+            --region ${{ env.AWS_REGION }}
