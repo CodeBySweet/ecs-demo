@@ -79,12 +79,18 @@ jobs:
         with:
           region: ${{ env.AWS_REGION }}
 
-      # Step 9: Build and push Docker image
-      - name: Build & Push Docker Image
-        if: github.event.inputs.action == 'apply' && steps.outputs.outputs.ECR_REPO_URL
+      # Step 9: Build and Push Docker Image
+      - name: Build and Push Docker Image
+        if: github.event.inputs.action == 'apply' && steps.tf-outputs.outputs.ECR_REPO_URL
         run: |
-          docker build -t ${{ steps.outputs.outputs.ECR_REPO_URL }}:latest .
-          docker push ${{ steps.outputs.outputs.ECR_REPO_URL }}:latest
+          # Properly extract and sanitize the ECR repo URL
+          ECR_REPO_URL=$(echo "${{ steps.tf-outputs.outputs.ECR_REPO_URL }}" | tr -d '\n' | sed 's/::debug::.*//')
+          
+          echo "Building Docker image with repository: ${ECR_REPO_URL}"
+          docker build -t ${ECR_REPO_URL}:latest .
+          
+          echo "Pushing Docker image..."
+          docker push ${ECR_REPO_URL}:latest
 
       # Step 10: Start ECR image scan
       - name: Initiate Image Scan
