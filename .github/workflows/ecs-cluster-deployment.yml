@@ -58,6 +58,7 @@ jobs:
             terraform apply -auto-approve
           else
             terraform destroy -auto-approve
+          fi  
 
       # Step 7: Check if action is 'apply'
       - name: Check if action is 'apply'
