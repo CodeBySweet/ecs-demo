@@ -14,9 +14,9 @@ output "ecr_repository_name" {
   value = aws_ecr_repository.my_repo.name
 }
 
-output "task_definition_file" {
-  value = local_file.task_definition.filename
-}
+# output "task_definition_file" {
+#   value = local_file.task_definition.filename
+# }
 
 output "task_definition_content" {
   value = aws_ecs_task_definition.my_task.container_definitions
