@@ -9,14 +9,10 @@ data "aws_subnets" "existing_subnets" {
     name   = "vpc-id"
     values = [data.aws_vpc.existing_vpc.id]
   }
-    filter {
-    name   = "availability-zone"
-    values = ["us-east-1a"] 
-  }
 }
 
 locals {
-  alb_subnets = data.aws_subnets.existing_subnets.ids
+  alb_subnets = slice(data.aws_subnets.existing_subnets.ids, 0, 2)
 }
 
 # Create a security group for the application
