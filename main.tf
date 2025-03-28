@@ -142,6 +142,81 @@ resource "aws_ecs_cluster" "my_cluster" {
   }
 }
 
+# ALB Security Group
+resource "aws_security_group" "alb_sg" {
+  name        = "my-app-alb-sg"
+  description = "Security group for ALB"
+  vpc_id      = data.aws_vpc.existing_vpc.id
+
+  ingress {
+    description = "HTTP from anywhere"
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTPS from anywhere"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+# Application Load Balancer
+resource "aws_lb" "app" {
+  name               = "my-app-alb"
+  internal           = false
+  load_balancer_type = "application"
+  security_groups    = [aws_security_group.alb_sg.id]
+  subnets            = local.subnets
+
+  enable_deletion_protection = false
+
+  tags = {
+    Environment = "production"
+  }
+}
+
+# Target Group
+resource "aws_lb_target_group" "app" {
+  name        = "my-app-tg"
+  port        = 5000
+  protocol    = "HTTP"
+  vpc_id      = data.aws_vpc.existing_vpc.id
+  target_type = "ip"
+
+  health_check {
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 10
+    interval            = 30
+    path                = "/health"
+    matcher             = "200"
+  }
+}
+
+# Listener
+resource "aws_lb_listener" "http" {
+  load_balancer_arn = aws_lb.app.arn
+  port              = "80"
+  protocol          = "HTTP"
+
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.app.arn
+  }
+}
+
 # Create an ECS service for the application
 resource "aws_ecs_service" "my_service" {
   name            = "my-app-service"
@@ -150,20 +225,29 @@ resource "aws_ecs_service" "my_service" {
   desired_count   = 2
   launch_type     = "FARGATE"
 
-  # Enable CloudWatch metrics for the service
-  enable_ecs_managed_tags = true
-  propagate_tags          = "SERVICE"
-
   network_configuration {
     subnets          = local.subnets
     security_groups  = local.security_groups
     assign_public_ip = true
   }
 
-  # Enable service discovery for the Flask app
+  load_balancer {
+    target_group_arn = aws_lb_target_group.app.arn
+    container_name   = "my-app-container"
+    container_port   = 5000
+  }
+
   service_registries {
     registry_arn = aws_service_discovery_service.my_app.arn
+    port         = 5000
   }
+
+  depends_on = [aws_lb_listener.http]
+}
+
+# Output ALB DNS name
+output "alb_dns_name" {
+  value = aws_lb.app.dns_name
 }
 
 resource "local_file" "task_definition" {
