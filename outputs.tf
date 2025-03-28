@@ -18,6 +18,6 @@ output "task_definition_file" {
   value = local_file.task_definition.filename
 }
 
-output "container_definitions" {
+output "task_definition_content" {
   value = aws_ecs_task_definition.my_task.container_definitions
 }
