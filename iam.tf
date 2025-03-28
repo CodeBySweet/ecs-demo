@@ -81,7 +81,16 @@ resource "aws_iam_role_policy" "ecr_access" {
         "ecr:TagResource"
       ]
       Resource = "*"
-    }]
+    },
+    {
+        Effect = "Allow",
+        Action = [
+          "ecr:PutImage",
+          "ecr:StartImageScan"
+        ],
+        Resource = "*"
+      }
+    ]
   })
 }
 
