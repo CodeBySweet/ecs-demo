@@ -16,7 +16,7 @@ data "aws_subnets" "existing_subnets" {
 }
 
 locals {
-  alb_subnets = data.aws_subnets.aexisting_subnets.ids
+  alb_subnets = data.aws_subnets.existing_subnets.ids
 }
 
 # Create a security group for the application
