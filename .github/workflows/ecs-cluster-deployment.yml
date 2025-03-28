@@ -27,8 +27,8 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     outputs:
-      plan_status: ${{ steps.plan.outputs.status || 'skipped' }}
-      apply_status: ${{ steps.apply.outputs.status || 'skipped' }}
+      operation_status: ${{ steps.terraform.outputs.status || 'skipped' }}
+      operation_type: ${{ github.event.inputs.terraform_action }}
 
     steps:
     # ----------------------------------
@@ -65,57 +65,30 @@ jobs:
       run: terraform init
 
     # ----------------------------------
-    # Step 5: Validate Terraform configuration (only for plan)
+    # Step 5: Run Terraform Operation
     # ----------------------------------
-    - name: Terraform Validate
-      id: validate
-      if: github.event.inputs.terraform_action == 'plan'
-      working-directory: ${{ env.TF_WORKING_DIR }}
-      run: terraform validate
-      
-    # ----------------------------------
-    # Step 6: Check Terraform formatting (only for plan)
-    # ----------------------------------
-    - name: Terraform Format Check
-      id: fmt
-      if: github.event.inputs.terraform_action == 'plan'
-      working-directory: ${{ env.TF_WORKING_DIR }}
-      run: terraform fmt -check -recursive
-
-    # ----------------------------------
-    # Step 7: Conditional Terraform Operations
-    # ----------------------------------
-    - name: Terraform Plan
-      id: plan
-      if: github.event.inputs.terraform_action == 'plan'
+    - name: Run Terraform
+      id: terraform
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform plan \
-          -input=false \
-          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        echo "status=success" >> $GITHUB_OUTPUT
-        
-    - name: Terraform Apply
-      id: apply
-      if: github.event.inputs.terraform_action == 'apply'
-      working-directory: ${{ env.TF_WORKING_DIR }}
-      run: |
-        terraform apply \
-          -input=false \
-          -auto-approve \
-          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
+        if [ "${{ github.event.inputs.terraform_action }}" == "plan" ]; then
+          terraform plan -input=false -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
+        elif [ "${{ github.event.inputs.terraform_action }}" == "apply" ]; then
+          terraform apply -input=false -auto-approve -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
+        elif [ "${{ github.event.inputs.terraform_action }}" == "destroy" ]; then
+          terraform destroy -input=false -auto-approve -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
+        fi
         echo "status=success" >> $GITHUB_OUTPUT
 
-    - name: Terraform Destroy
-      id: destroy
-      if: github.event.inputs.terraform_action == 'destroy'
+    # ----------------------------------
+    # Step 6: Generate task-definition.json
+    # ----------------------------------
+    - name: Generate Task Definition
+      if: github.event.inputs.terraform_action != 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform destroy \
-          -input=false \
-          -auto-approve \
-          -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        echo "DESTROY_STATUS=success" >> $GITHUB_ENV
+        terraform output -raw container_definitions > task-definition.json
+        cat task-definition.json
 
   build-scan-deploy:
     name: Build, Scan, Deploy
@@ -123,8 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.terraform_action != 'destroy' &&
-      (needs.terraform.outputs.apply_status == 'success' ||
-       (github.event.inputs.terraform_action == 'plan' && needs.terraform.outputs.plan_status == 'success'))
+      needs.terraform.outputs.operation_status == 'success'
 
     steps:
     # ----------------------------------
@@ -151,7 +123,19 @@ jobs:
       uses: aws-actions/amazon-ecr-login@v1
 
     # ----------------------------------
-    # Step 4: Build Docker image
+    # Step 4: Verify task definition
+    # ----------------------------------
+    - name: Verify Task Definition
+      run: |
+        if [ ! -f "task-definition.json" ]; then
+          echo "::error::task-definition.json not found!"
+          exit 1
+        fi
+        echo "Task definition contents:"
+        cat task-definition.json
+
+    # ----------------------------------
+    # Step 5: Build Docker image
     # ----------------------------------
     - name: Build Docker Image
       id: build-image
@@ -164,7 +148,7 @@ jobs:
         echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     # ----------------------------------
-    # Step 5: Push to ECR
+    # Step 6: Push to ECR
     # ----------------------------------
     - name: Push to ECR
       id: push-image
@@ -173,11 +157,11 @@ jobs:
         sleep 5  # Brief pause before scan
 
     # ----------------------------------
-    # Step 6: Initiate ECR Image Scan (without evaluation)
+    # Step 7: Initiate ECR Image Scan
     # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
-      continue-on-error: true  # Don't fail if scan can't be started
+      continue-on-error: true
       run: |
         echo "Initiating async security scan for image: ${{ steps.build-image.outputs.image }}"
         aws ecr start-image-scan \
@@ -186,10 +170,10 @@ jobs:
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
     # ----------------------------------
-    # Step 7: Deploy to ECS
+    # Step 8: Deploy to ECS
     # ----------------------------------
     - name: Deploy to ECS
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v3
       with:
         task-definition: ./task-definition.json
         container-name: "my-app-container"
