@@ -30,6 +30,8 @@ jobs:
       operation_status: ${{ steps.terraform.outputs.status || 'skipped' }}
       operation_type: ${{ github.event.inputs.terraform_action }}
       ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url }}
+      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn }}
+      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn }}
 
     steps:
     # ----------------------------------
@@ -86,21 +88,6 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     # ----------------------------------
-    # Step: Verify Terraform Outputs
-    # Description: Checks that required outputs exist before capturing them
-    # ----------------------------------
-    - name: Verify Terraform Outputs
-      id: verify-outputs
-      working-directory: ${{ env.TF_WORKING_DIR }}
-      run: |
-        echo "Checking Terraform outputs..."
-        terraform output -json
-        if ! terraform output -raw ecr_repository_url >/dev/null 2>&1; then
-          echo "ERROR: ecr_repository_url output not found"
-          exit 1
-        fi
-
-    # ----------------------------------
     # Step: Capture Terraform Outputs
     # Description: Captures outputs for use in subsequent jobs
     # ----------------------------------
@@ -110,8 +97,12 @@ jobs:
       if: ${{ github.event.inputs.terraform_action == 'apply' && steps.terraform.outcome == 'success' }}
       run: |
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+        echo "ecs_task_execution_role_arn=$(terraform output -raw ecs_task_execution_role_arn)" >> $GITHUB_OUTPUT
+        echo "ecs_task_role_arn=$(terraform output -raw ecs_task_role_arn)" >> $GITHUB_OUTPUT
         echo "Captured outputs:"
-        echo "ecr_repository_url: $(terraform output -raw ecr_repository_url)"
+        echo "ECR Repository URL: $(terraform output -raw ecr_repository_url)"
+        echo "ECS Execution Role ARN: $(terraform output -raw ecs_task_execution_role_arn)"
+        echo "ECS Task Role ARN: $(terraform output -raw ecs_task_role_arn)"
 
   build-scan-deploy:
     name: Build, Scan, Deploy
@@ -199,20 +190,25 @@ jobs:
 
     # ----------------------------------
     # Step: Prepare Task Definition
-    # Description: Updates image in static task definition file
+    # Description: Updates placeholders in static task definition file
     # ----------------------------------
     - name: Prepare Task Definition
       id: prepare-task-def
       run: |
-        # Update the image in the task definition using jq
-        jq --arg image "${{ steps.build-image.outputs.image }}" \
-          '.containerDefinitions[0].image = $image' \
+        # Perform all replacements using jq for safe JSON handling
+        jq \
+          --arg image "${{ steps.build-image.outputs.image }}" \
+          --arg execution_role "${{ needs.terraform.outputs.ecs_task_execution_role_arn }}" \
+          --arg task_role "${{ needs.terraform.outputs.ecs_task_role_arn }}" \
+          '.containerDefinitions[0].image = $image |
+           .executionRoleArn = $execution_role |
+           .taskRoleArn = $task_role' \
           task-definition.json > updated-task-definition.json
         
-        # Validate the final JSON
-        jq empty updated-task-definition.json
+        # Validate the result
         echo "Final task definition:"
         cat updated-task-definition.json
+        jq empty updated-task-definition.json  # Validate JSON syntax
 
     # ----------------------------------
     # Step: Deploy to ECS
