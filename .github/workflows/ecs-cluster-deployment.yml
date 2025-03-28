@@ -29,13 +29,13 @@ jobs:
     outputs:
       operation_status: ${{ steps.terraform.outputs.status || 'skipped' }}
       operation_type: ${{ github.event.inputs.terraform_action }}
+      container_definitions: ${{ steps.set-outputs.outputs.container_definitions }}
+      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url }}
 
     steps:
-    # Checkout repository code
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # Configure AWS credentials from GitHub secrets
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -43,20 +43,17 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Install specified Terraform version
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
-    # Initialize Terraform working directory
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
-    # Execute Terraform plan/apply/destroy based on input
     - name: Run Terraform
       id: terraform
       working-directory: ${{ env.TF_WORKING_DIR }}
@@ -70,18 +67,12 @@ jobs:
         fi
         echo "status=success" >> $GITHUB_OUTPUT
 
-    # Generate task definition file for ECS
-    - name: Generate Task Definition
-      if: github.event.inputs.terraform_action != 'destroy'
+    - name: Capture Terraform Outputs
+      id: set-outputs
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        if [ "${{ github.event.inputs.terraform_action }}" == "apply" ]; then
-          terraform output -raw container_definitions > task-definition.json
-          echo "Generated task-definition.json:"
-          cat task-definition.json
-        else
-          echo "Skipping task definition generation for ${{ github.event.inputs.terraform_action }}"
-        fi
+        echo "container_definitions=$(terraform output -raw container_definitions)" >> $GITHUB_OUTPUT
+        echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
 
   build-scan-deploy:
     name: Build, Scan, Deploy
@@ -92,11 +83,9 @@ jobs:
       needs.terraform.outputs.operation_status == 'success'
 
     steps:
-    # Checkout repository code
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # Configure AWS credentials from GitHub secrets
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -104,7 +93,6 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Verify ECR repository exists
     - name: Verify ECR Repository
       run: |
         aws ecr describe-repositories \
@@ -112,22 +100,18 @@ jobs:
           --region $AWS_REGION || \
         (echo "ECR repository not found - did Terraform apply complete successfully?" && exit 1)
 
-    # Authenticate with Amazon ECR
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # Verify task definition file exists
-    - name: Verify Task Definition
+    - name: Generate Task Definition
       run: |
-        if [ ! -f "task-definition.json" ]; then
-          echo "::error::task-definition.json not found!"
-          exit 1
-        fi
-        echo "Task definition contents:"
+        cat <<EOF > task-definition.json
+        ${{ needs.terraform.outputs.container_definitions }}
+        EOF
+        echo "Generated task-definition.json:"
         cat task-definition.json
 
-    # Build Docker image from Dockerfile
     - name: Build Docker Image
       id: build-image
       env:
@@ -138,14 +122,12 @@ jobs:
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
         echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    # Push Docker image to ECR
     - name: Push to ECR
       id: push-image
       run: |
         docker push ${{ steps.build-image.outputs.image }}
-        sleep 5  # Brief pause before scan
+        sleep 5
 
-    # Initiate security scan of Docker image
     - name: Start Image Security Scan
       id: start-scan
       continue-on-error: true
@@ -156,7 +138,6 @@ jobs:
           --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
-    # Deploy to ECS service
     - name: Deploy to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v1
       with:
