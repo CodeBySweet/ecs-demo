@@ -27,11 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     outputs:
-      operation_status: ${{ steps.terraform.outputs.status }}
+      operation_status: ${{ steps.set-status.outputs.status }}
       operation_type: ${{ github.event.inputs.terraform_action }}
-      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url || '' }}
-      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn || '' }}
-      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn || '' }}
+      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url || 'none' }}
+      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn || 'none' }}
+      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn || 'none' }}
 
     steps:
     # Step 1: Checkout repository
@@ -63,27 +63,27 @@ jobs:
     - name: Terraform Plan
       if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
-      run: |
-        terraform plan -input=false -no-color
-        echo "status=success" >> $GITHUB_OUTPUT
+      run: terraform plan -input=false -no-color
 
     # Step 6: Run Terraform Apply
     - name: Terraform Apply
       if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
-      run: |
-        terraform apply -input=false -auto-approve
-        echo "status=success" >> $GITHUB_OUTPUT
+      run: terraform apply -input=false -auto-approve
 
     # Step 7: Run Terraform Destroy
     - name: Terraform Destroy
       if: github.event.inputs.terraform_action == 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
-      run: |
-        terraform destroy -input=false -auto-approve
-        echo "status=success" >> $GITHUB_OUTPUT
+      run: terraform destroy -input=false -auto-approve
 
-    # Step 8: Capture Terraform Outputs (only for apply)
+    # Step 8: Set Status
+    - name: Set Status
+      id: set-status
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: echo "status=success" >> $GITHUB_OUTPUT
+
+    # Step 9: Capture Terraform Outputs (only for apply)
     - name: Capture Terraform Outputs
       id: set-outputs
       if: github.event.inputs.terraform_action == 'apply'
@@ -99,8 +99,7 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.terraform_action == 'apply' &&
-      needs.terraform.outputs.operation_status == 'success' &&
-      needs.terraform.outputs.ecr_repository_url != ''
+      needs.terraform.outputs.operation_status == 'success'
 
     steps:
     # Step 1: Checkout repository
