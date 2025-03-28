@@ -47,7 +47,16 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
           "sqs:SendMessage"
         ]
         Resource = "*"
-      }
+      },
+      		{
+			"Effect": "Allow",
+			"Action": [
+				"logs:CreateLogGroup",
+				"logs:CreateLogStream",
+				"logs:PutLogEvents"
+			],
+			"Resource": "*"
+		}
     ]
   })
 }

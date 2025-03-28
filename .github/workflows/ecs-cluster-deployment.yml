@@ -34,16 +34,11 @@ jobs:
       ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn }}
 
     steps:
-    # ----------------------------------
-    # Step: Checkout repository
-    # ----------------------------------
+    # Step 1: Checkout repository
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # ----------------------------------
-    # Step: Configure AWS credentials
-    # Description: Sets up AWS credentials for Terraform to use
-    # ----------------------------------
+    # Step 2: Configure AWS credentials
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -51,58 +46,34 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # ----------------------------------
-    # Step: Setup Terraform
-    # Description: Installs specified version of Terraform
-    # ----------------------------------
+    # Step 3: Setup Terraform
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
-    # ----------------------------------
-    # Step: Terraform Init
-    # Description: Initializes Terraform working directory
-    # ----------------------------------
+    # Step 4: Terraform Init
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
-    # ----------------------------------
-    # Step: Run Terraform
-    # Description: Executes Terraform plan/apply/destroy based on user input
-    # ----------------------------------
+    # Step 5: Run Terraform
     - name: Run Terraform
       id: terraform
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        if [ "${{ github.event.inputs.terraform_action }}" == "plan" ]; then
-          terraform plan -input=false -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        elif [ "${{ github.event.inputs.terraform_action }}" == "apply" ]; then
-          terraform apply -input=false -auto-approve -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        elif [ "${{ github.event.inputs.terraform_action }}" == "destroy" ]; then
-          terraform destroy -input=false -auto-approve -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
-        fi
-        echo "status=success" >> $GITHUB_OUTPUT
+        terraform ${{ github.event.inputs.terraform_action }} -input=false -auto-approve
 
-    # ----------------------------------
-    # Step: Capture Terraform Outputs
-    # Description: Captures outputs for use in subsequent jobs
-    # ----------------------------------
+    # Step 6: Capture Terraform Outputs
     - name: Capture Terraform Outputs
       id: set-outputs
       working-directory: ${{ env.TF_WORKING_DIR }}
-      if: ${{ github.event.inputs.terraform_action == 'apply' && steps.terraform.outcome == 'success' }}
       run: |
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
         echo "ecs_task_execution_role_arn=$(terraform output -raw ecs_task_execution_role_arn)" >> $GITHUB_OUTPUT
         echo "ecs_task_role_arn=$(terraform output -raw ecs_task_role_arn)" >> $GITHUB_OUTPUT
-        echo "Captured outputs:"
-        echo "ECR Repository URL: $(terraform output -raw ecr_repository_url)"
-        echo "ECS Execution Role ARN: $(terraform output -raw ecs_task_execution_role_arn)"
-        echo "ECS Task Role ARN: $(terraform output -raw ecs_task_role_arn)"
 
   build-scan-deploy:
     name: Build, Scan, Deploy
@@ -113,17 +84,11 @@ jobs:
       needs.terraform.outputs.operation_status == 'success'
 
     steps:
-    # ----------------------------------
-    # Step: Checkout repository
-    # Description: Checks out the source code including static task-definition.json
-    # ----------------------------------
+    # Step 1: Checkout repository
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # ----------------------------------
-    # Step: Configure AWS credentials
-    # Description: Sets up AWS credentials for ECR/ECS operations
-    # ----------------------------------
+    # Step 2: Configure AWS credentials
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -131,10 +96,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # ----------------------------------
-    # Step: Verify ECR Repository
-    # Description: Verifies ECR repository was created by Terraform
-    # ----------------------------------
+    # Step 3: Verify ECR Repository
     - name: Verify ECR Repository
       run: |
         aws ecr describe-repositories \
@@ -142,18 +104,12 @@ jobs:
           --region $AWS_REGION || \
         (echo "ECR repository not found - did Terraform apply complete successfully?" && exit 1)
 
-    # ----------------------------------
-    # Step: Login to Amazon ECR
-    # Description: Logs in to ECR to enable Docker pushes
-    # ----------------------------------
+    # Step 4: Login to Amazon ECR
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # ----------------------------------
-    # Step: Build Docker Image
-    # Description: Builds Docker image from Dockerfile
-    # ----------------------------------
+    # Step 5: Build Docker Image
     - name: Build Docker Image
       id: build-image
       env:
@@ -164,20 +120,14 @@ jobs:
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
         echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    # ----------------------------------
-    # Step: Push to ECR
-    # Description: Pushes built Docker image to ECR repository
-    # ----------------------------------
+    # Step 6: Push to ECR
     - name: Push to ECR
       id: push-image
       run: |
         docker push ${{ steps.build-image.outputs.image }}
         sleep 5
 
-    # ----------------------------------
-    # Step: Start Image Security Scan
-    # Description: Initiates security scan of pushed Docker image
-    # ----------------------------------
+    # Step 7: Start Image Security Scan
     - name: Start Image Security Scan
       id: start-scan
       continue-on-error: true
@@ -188,29 +138,24 @@ jobs:
           --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
-    # ----------------------------------
-    # Step: Prepare Task Definition
-    # Description: Updates placeholders in static task definition file
-    # ----------------------------------
-    - name: Prepare Task Definition
-      id: prepare-task-def
+    # Step 8: Create imagedefinitions.json
+    - name: Create imagedefinitions.json
       run: |
-        # Verify and update task definition
-        jq \
-          --arg er "${{ needs.terraform.outputs.ecs_task_execution_role_arn }}" \
-          --arg tr "${{ needs.terraform.outputs.ecs_task_role_arn }}" \
-          --arg img "${{ steps.build-image.outputs.image }}" \
-          '.executionRoleArn = $er | .taskRoleArn = $tr | .containerDefinitions[0].image = $img' \
-          task-definition.json > updated-task-definition.json
-        
-        # Verify and show result
-        jq empty updated-task-definition.json
-        cat updated-task-definition.json
+        echo "Creating imagedefinitions.json..."
+        echo '[{
+          "name": "my-app-container",
+          "imageUri": "'${{ steps.build-image.outputs.image }}'"
+        }]' > imagedefinitions.json
+        cat imagedefinitions.json
 
-    # ----------------------------------
-    # Step: Deploy to ECS
-    # Description: Deploys the new task definition to ECS service
-    # ----------------------------------
+    # Step 9: Update ECS Service
+    - name: Update ECS Service
+      run: |
+        echo "Updating ECS Service..."
+        aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force-new-deployment
+        echo "✅ ECS Service updated successfully."
+
+    # Step 10: Deploy to ECS
     - name: Deploy to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
@@ -219,3 +164,10 @@ jobs:
         cluster: ${{ env.ECS_CLUSTER }}
         wait-for-service-stability: true
         force-new-deployment: true
+
+    # Step 11: Upload imagedefinitions.json
+    - name: Upload imagedefinitions.json
+      uses: actions/upload-artifact@v3
+      with:
+        name: imagedefinitions
+        path: imagedefinitions.json
