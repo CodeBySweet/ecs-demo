@@ -27,11 +27,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     outputs:
-      operation_status: ${{ steps.terraform.outputs.status || 'skipped' }}
+      operation_status: ${{ steps.terraform.outputs.status }}
       operation_type: ${{ github.event.inputs.terraform_action }}
-      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url }}
-      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn }}
-      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn }}
+      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url || '' }}
+      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn || '' }}
+      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn || '' }}
 
     steps:
     # Step 1: Checkout repository
@@ -59,16 +59,34 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
-    # Step 5: Run Terraform
-    - name: Run Terraform
-      id: terraform
+    # Step 5: Run Terraform Plan
+    - name: Terraform Plan
+      if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform ${{ github.event.inputs.terraform_action }} -input=false -auto-approve
+        terraform plan -input=false -no-color
+        echo "status=success" >> $GITHUB_OUTPUT
 
-    # Step 6: Capture Terraform Outputs
+    # Step 6: Run Terraform Apply
+    - name: Terraform Apply
+      if: github.event.inputs.terraform_action == 'apply'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
+        terraform apply -input=false -auto-approve
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    # Step 7: Run Terraform Destroy
+    - name: Terraform Destroy
+      if: github.event.inputs.terraform_action == 'destroy'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
+        terraform destroy -input=false -auto-approve
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    # Step 8: Capture Terraform Outputs (only for apply)
     - name: Capture Terraform Outputs
       id: set-outputs
+      if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
@@ -81,7 +99,8 @@ jobs:
     runs-on: ubuntu-latest
     if: |
       github.event.inputs.terraform_action == 'apply' &&
-      needs.terraform.outputs.operation_status == 'success'
+      needs.terraform.outputs.operation_status == 'success' &&
+      needs.terraform.outputs.ecr_repository_url != ''
 
     steps:
     # Step 1: Checkout repository
@@ -101,8 +120,7 @@ jobs:
       run: |
         aws ecr describe-repositories \
           --repository-names $ECR_REPOSITORY \
-          --region $AWS_REGION || \
-        (echo "ECR repository not found - did Terraform apply complete successfully?" && exit 1)
+          --region $AWS_REGION
 
     # Step 4: Login to Amazon ECR
     - name: Login to Amazon ECR
@@ -141,33 +159,15 @@ jobs:
     # Step 8: Create imagedefinitions.json
     - name: Create imagedefinitions.json
       run: |
-        echo "Creating imagedefinitions.json..."
         echo '[{
           "name": "my-app-container",
           "imageUri": "'${{ steps.build-image.outputs.image }}'"
         }]' > imagedefinitions.json
-        cat imagedefinitions.json
 
     # Step 9: Update ECS Service
     - name: Update ECS Service
       run: |
-        echo "Updating ECS Service..."
-        aws ecs update-service --cluster ${{ env.ECS_CLUSTER }} --service ${{ env.ECS_SERVICE }} --force-new-deployment
-        echo "✅ ECS Service updated successfully."
-
-    # Step 10: Deploy to ECS
-    - name: Deploy to ECS
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v2
-      with:
-        task-definition: updated-task-definition.json
-        service: ${{ env.ECS_SERVICE }}
-        cluster: ${{ env.ECS_CLUSTER }}
-        wait-for-service-stability: true
-        force-new-deployment: true
-
-    # Step 11: Upload imagedefinitions.json
-    - name: Upload imagedefinitions.json
-      uses: actions/upload-artifact@v3
-      with:
-        name: imagedefinitions
-        path: imagedefinitions.json
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE }} \
+          --force-new-deployment
