@@ -239,7 +239,6 @@ resource "aws_ecs_service" "my_service" {
 
   service_registries {
     registry_arn = aws_service_discovery_service.my_app.arn
-    port         = 5000
   }
 
   depends_on = [aws_lb_listener.http]
