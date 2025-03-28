@@ -70,6 +70,7 @@ jobs:
     - name: Capture Terraform Outputs
       id: set-outputs
       working-directory: ${{ env.TF_WORKING_DIR }}
+      if: ${{ github.event.inputs.terraform_action == 'apply' && steps.terraform.outcome == 'success' }}
       run: |
         echo "container_definitions=$(terraform output -raw container_definitions)" >> $GITHUB_OUTPUT
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
