@@ -35,11 +35,7 @@
           "retries": 5,
           "startPeriod": 120,
           "timeout": 5
-        },
-        "environment": [],
-        "mountPoints": [],
-        "systemControls": [],
-        "volumesFrom": []
+        }
       }
     ],
     "cpu": "1024",
