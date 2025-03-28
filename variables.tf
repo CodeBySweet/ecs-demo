@@ -60,7 +60,8 @@ variable "grafana_desired_count" {
 
 variable "sns_topic_arn" {
   description = "ARN for SNS topic for alarms"
-  type        = "arn:aws:sns:us-east-1:626635421987:ECS_TOPIC"
+  type        = string
+  default = "arn:aws:sns:us-east-1:626635421987:ECS_TOPIC"
 }
 
 variable "another_variable" {
