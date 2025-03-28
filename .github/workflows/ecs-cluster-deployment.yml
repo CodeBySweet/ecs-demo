@@ -195,32 +195,18 @@ jobs:
     - name: Prepare Task Definition
       id: prepare-task-def
       run: |
-        # Get values from Terraform outputs
-        EXECUTION_ROLE_ARN="${{ needs.terraform.outputs.ecs_task_execution_role_arn }}"
-        TASK_ROLE_ARN="${{ needs.terraform.outputs.ecs_task_role_arn }}"
+        # Verify and update task definition
+        jq \
+          --arg er "${{ needs.terraform.outputs.ecs_task_execution_role_arn }}" \
+          --arg tr "${{ needs.terraform.outputs.ecs_task_role_arn }}" \
+          --arg img "${{ steps.build-image.outputs.image }}" \
+          '.executionRoleArn = $er | .taskRoleArn = $tr | .containerDefinitions[0].image = $img' \
+          task-definition.json > updated-task-definition.json
         
-        # Render the template with actual values
-        # Note: Numeric values (CPU, memory, ports) must NOT be quoted
-        sed \
-          -e "s|\"{{EXECUTION_ROLE_ARN}}\"|\"$EXECUTION_ROLE_ARN\"|g" \
-          -e "s|\"{{TASK_ROLE_ARN}}\"|\"$TASK_ROLE_ARN\"|g" \
-          -e "s|\"{{IMAGE}}\"|\"${{ steps.build-image.outputs.image }}\"|g" \
-          -e "s|\"{{CONTAINER_NAME}}\"|\"my-app-container\"|g" \
-          -e "s|\"{{CONTAINER_CPU}}\"|1024|g" \  # Removed quotes
-          -e "s|\"{{CONTAINER_MEMORY}}\"|3072|g" \  # Removed quotes
-          -e "s|\"{{CONTAINER_PORT}}\"|5000|g" \  # Removed quotes
-          -e "s|\"{{LOG_GROUP}}\"|\"/ecs/my-app-task\"|g" \
-          -e "s|\"{{AWS_REGION}}\"|\"us-east-1\"|g" \
-          -e "s|\"{{FAMILY_NAME}}\"|\"my-app-task\"|g" \
-          -e "s|\"{{TASK_CPU}}\"|1024|g" \  # Removed quotes
-          -e "s|\"{{TASK_MEMORY}}\"|3072|g" \  # Removed quotes
-          task-definition.json.tpl > task-definition.json
-        
-        # Validate JSON and check numeric values
-        jq empty task-definition.json
-        echo "Final task definition (validating numeric fields):"
-        jq '.containerDefinitions[0].cpu, .containerDefinitions[0].memory, .containerDefinitions[0].portMappings[0].containerPort, .cpu, .memory' task-definition.json
-        cat task-definition.json
+        # Verify and show result
+        jq empty updated-task-definition.json
+        cat updated-task-definition.json
+
     # ----------------------------------
     # Step: Deploy to ECS
     # Description: Deploys the new task definition to ECS service
@@ -228,7 +214,7 @@ jobs:
     - name: Deploy to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
-        task-definition: task-definition.json  
+        task-definition: updated-task-definition.json
         service: ${{ env.ECS_SERVICE }}
         cluster: ${{ env.ECS_CLUSTER }}
         wait-for-service-stability: true

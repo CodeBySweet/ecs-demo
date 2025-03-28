@@ -92,11 +92,12 @@ resource "aws_ecs_task_definition" "my_task" {
   cpu                      = "1024"
   memory                   = "3072"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+  task_role_arn            = aws_iam_role.ecs_task_role.arn
 
   container_definitions = jsonencode([
     {
       name      = "my-app-container"
-      image     = local.app_image_url
+      image     = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
       cpu       = 1024
       memory    = 3072
       essential = true
@@ -151,7 +152,7 @@ resource "aws_ecs_service" "my_service" {
   name            = "my-app-service"
   cluster         = aws_ecs_cluster.my_cluster.id
   task_definition = aws_ecs_task_definition.my_task.arn
-  desired_count   = 1
+  desired_count   = 2
   launch_type     = "FARGATE"
 
   # Enable CloudWatch metrics for the service
@@ -171,23 +172,8 @@ resource "aws_ecs_service" "my_service" {
 }
 
 resource "local_file" "task_definition" {
-  content = templatefile("${path.module}/task-definition.json.tpl", {
-    # Required variables
-    execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
-    container_image    = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
-    
-    # Optional variables (customize as needed)
-    container_name    = "my-app-container"
-    container_cpu     = 1024
-    container_memory  = 3072
-    container_port    = 5000
-    log_group        = "/ecs/my-app-task"
-    aws_region       = "us-east-1"
-    family_name      = "my-app-task"
-    task_cpu         = "1024"
-    task_memory      = "3072"
-  })
-  filename = "${path.module}/task-definition.json"
+  filename = "${path.root}/task-definition.json"
+  content  = aws_ecs_task_definition.my_task.container_definitions
 }
 
 output "container_definitions" {
