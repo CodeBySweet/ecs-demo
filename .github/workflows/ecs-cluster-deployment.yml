@@ -33,9 +33,16 @@ jobs:
       ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url }}
 
     steps:
+    # ----------------------------------
+    # Step: Checkout repository
+    # ----------------------------------
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    # ----------------------------------
+    # Step: Configure AWS credentials
+    # Description: Sets up AWS credentials for Terraform to use
+    # ----------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -43,17 +50,29 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    # ----------------------------------
+    # Step: Setup Terraform
+    # Description: Installs specified version of Terraform
+    # ----------------------------------
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
+    # ----------------------------------
+    # Step: Terraform Init
+    # Description: Initializes Terraform working directory
+    # ----------------------------------
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
+    # ----------------------------------
+    # Step: Run Terraform
+    # Description: Executes Terraform plan/apply/destroy based on user input
+    # ----------------------------------
     - name: Run Terraform
       id: terraform
       working-directory: ${{ env.TF_WORKING_DIR }}
@@ -67,13 +86,40 @@ jobs:
         fi
         echo "status=success" >> $GITHUB_OUTPUT
 
+    # ----------------------------------
+    # Step: Verify Terraform Outputs
+    # Description: Checks that required outputs exist before capturing them
+    # ----------------------------------
+    - name: Verify Terraform Outputs
+      id: verify-outputs
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
+        echo "Checking Terraform outputs..."
+        terraform output -json
+        if ! terraform output -raw container_definitions >/dev/null 2>&1; then
+          echo "ERROR: container_definitions output not found"
+          exit 1
+        fi
+        if ! terraform output -raw ecr_repository_url >/dev/null 2>&1; then
+          echo "ERROR: ecr_repository_url output not found"
+          exit 1
+        fi
+
+    # ----------------------------------
+    # Step: Capture Terraform Outputs
+    # Description: Captures outputs for use in subsequent jobs
+    # ----------------------------------
     - name: Capture Terraform Outputs
       id: set-outputs
       working-directory: ${{ env.TF_WORKING_DIR }}
       if: ${{ github.event.inputs.terraform_action == 'apply' && steps.terraform.outcome == 'success' }}
       run: |
-        echo "container_definitions=$(terraform output -raw container_definitions | jq -c)" >> $GITHUB_OUTPUT
+        container_defs=$(terraform output -raw container_definitions | jq -c .)
+        echo "container_definitions=${container_defs}" >> $GITHUB_OUTPUT
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+        echo "Captured outputs:"
+        echo "container_definitions: ${container_defs}"
+        echo "ecr_repository_url: $(terraform output -raw ecr_repository_url)"
 
   build-scan-deploy:
     name: Build, Scan, Deploy
@@ -84,9 +130,17 @@ jobs:
       needs.terraform.outputs.operation_status == 'success'
 
     steps:
+    # ----------------------------------
+    # Step: Checkout repository
+    # Description: Checks out the source code
+    # ----------------------------------
     - name: Checkout repository
       uses: actions/checkout@v3
 
+    # ----------------------------------
+    # Step: Configure AWS credentials
+    # Description: Sets up AWS credentials for ECR/ECS operations
+    # ----------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -94,6 +148,10 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
+    # ----------------------------------
+    # Step: Verify ECR Repository
+    # Description: Verifies ECR repository was created by Terraform
+    # ----------------------------------
     - name: Verify ECR Repository
       run: |
         aws ecr describe-repositories \
@@ -101,22 +159,57 @@ jobs:
           --region $AWS_REGION || \
         (echo "ECR repository not found - did Terraform apply complete successfully?" && exit 1)
 
+    # ----------------------------------
+    # Step: Login to Amazon ECR
+    # Description: Logs in to ECR to enable Docker pushes
+    # ----------------------------------
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
+    # ----------------------------------
+    # Step: Generate Task Definition
+    # Description: Creates task definition JSON file from Terraform outputs
+    # ----------------------------------
     - name: Generate Task Definition
+      id: generate-task-def
       run: |
-        # Use jq to ensure valid JSON formatting
-        echo '${{ needs.terraform.outputs.container_definitions }}' | jq '.' > task-definition.json
+        echo "Raw container definitions from outputs:"
+        echo "${{ needs.terraform.outputs.container_definitions }}"
+        
+        # Create task definition file with proper JSON formatting
+        echo '${{ needs.terraform.outputs.container_definitions }}' | jq . > task-definition.json
+        
         echo "Generated task-definition.json:"
         cat task-definition.json
+        echo ""
+        echo "File size: $(wc -c < task-definition.json) bytes"
+        echo "File content type: $(file -b --mime-type task-definition.json)"
 
+    # ----------------------------------
+    # Step: Validate Task Definition
+    # Description: Validates the generated task definition JSON
+    # ----------------------------------
     - name: Validate Task Definition
       run: |
-        jq empty task-definition.json
+        # Check if file exists and has content
+        if [ ! -s "task-definition.json" ]; then
+          echo "ERROR: task-definition.json is empty!"
+          exit 1
+        fi
+        
+        # Validate JSON syntax
+        if ! jq empty task-definition.json; then
+          echo "ERROR: Invalid JSON in task-definition.json"
+          exit 1
+        fi
+        
         echo "Task definition is valid JSON"
 
+    # ----------------------------------
+    # Step: Build Docker Image
+    # Description: Builds Docker image from Dockerfile
+    # ----------------------------------
     - name: Build Docker Image
       id: build-image
       env:
@@ -127,12 +220,20 @@ jobs:
         echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
         echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
+    # ----------------------------------
+    # Step: Push to ECR
+    # Description: Pushes built Docker image to ECR repository
+    # ----------------------------------
     - name: Push to ECR
       id: push-image
       run: |
         docker push ${{ steps.build-image.outputs.image }}
         sleep 5
 
+    # ----------------------------------
+    # Step: Start Image Security Scan
+    # Description: Initiates security scan of pushed Docker image
+    # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
       continue-on-error: true
@@ -143,6 +244,10 @@ jobs:
           --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
+    # ----------------------------------
+    # Step: Deploy to ECS
+    # Description: Deploys the new task definition to ECS service
+    # ----------------------------------
     - name: Deploy to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
