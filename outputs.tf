@@ -19,5 +19,9 @@ output "ecs_task_execution_role_arn" {
 }
 
 output "ecs_task_role_arn" {
-  value = aws_iam_role.ecs_task_role.arn  # Now correctly references the defined resource
+  value = aws_iam_role.ecs_task_role.arn  
+}
+
+output "task_definition" {
+  value = local_file.task_definition.content
 }
