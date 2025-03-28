@@ -87,15 +87,23 @@ jobs:
       if: github.event.inputs.terraform_action != 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: |
-        terraform output -raw container_definitions > task-definition.json
-        cat task-definition.json
+        # Only generate if we did an apply (when outputs are available)
+        if [ "${{ github.event.inputs.terraform_action }}" == "apply" ]; then
+          terraform output -raw container_definitions > task-definition.json
+          echo "Generated task-definition.json:"
+          cat task-definition.json
+        else
+          echo "Skipping task definition generation for ${{ github.event.inputs.terraform_action }}"
+          # For plan, you might want to use a template file instead
+          # or skip the build-scan-deploy job entirely for plan operations
+        fi
 
   build-scan-deploy:
     name: Build, Scan, Deploy
     needs: terraform
     runs-on: ubuntu-latest
     if: |
-      github.event.inputs.terraform_action != 'destroy' &&
+      github.event.inputs.terraform_action == 'apply' &&
       needs.terraform.outputs.operation_status == 'success'
 
     steps:
