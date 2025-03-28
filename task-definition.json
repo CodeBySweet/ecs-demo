@@ -20,13 +20,6 @@
             "awslogs-region": "us-east-1",
             "awslogs-stream-prefix": "ecs"
           }
-        },
-        "healthCheck": {
-          "command": ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"],
-          "interval": 30,
-          "retries": 5,
-          "startPeriod": 120,
-          "timeout": 5
         }
       }
     ],
@@ -36,5 +29,5 @@
     "cpu": "1024",
     "memory": "3072",
     "executionRoleArn": "REPLACE_EXECUTION_ROLE_ARN",
-    "taskRoleArn": "REPLACE_TASK_ROLE_ARN"
-  }
+    "taskRoleArn": "REPLACE_TASK_ROLE_ARN"  
+}

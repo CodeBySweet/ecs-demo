@@ -14,6 +14,44 @@ resource "aws_iam_role" "ecs_task_execution_role" {
   })
 }
 
+# IAM Role for ECS Task (Application-specific permissions)
+resource "aws_iam_role" "ecs_task_role" {
+  name = "ecsTaskRole"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Service = "ecs-tasks.amazonaws.com"
+      }
+      Action = "sts:AssumeRole"
+    }]
+  })
+}
+
+# Example policy attachment for the task role (customize as needed)
+resource "aws_iam_role_policy" "ecs_task_policy" {
+  name = "ECSTaskPolicy"
+  role = aws_iam_role.ecs_task_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          # Add your application-specific permissions here
+          "s3:GetObject",
+          "dynamodb:Query",
+          "sqs:SendMessage"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 # Attach the AmazonECSTaskExecutionRolePolicy to the role
 resource "aws_iam_role_policy_attachment" "ecs_task_execution_role_policy" {
   role       = aws_iam_role.ecs_task_execution_role.name
