@@ -2,7 +2,7 @@
     "containerDefinitions": [
       {
         "name": "my-app-container",
-        "image": "REPLACE_ME",
+        "image": "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:abc123",
         "cpu": 1024,
         "memory": 3072,
         "essential": true,
@@ -28,6 +28,6 @@
     "requiresCompatibilities": ["FARGATE"],
     "cpu": "1024",
     "memory": "3072",
-    "executionRoleArn": "REPLACE_EXECUTION_ROLE_ARN",
-    "taskRoleArn": "REPLACE_TASK_ROLE_ARN"  
-}
+    "executionRoleArn": "arn:aws:iam::123456789012:role/ecsTaskExecutionRole",
+    "taskRoleArn": "arn:aws:iam::123456789012:role/ecsTaskRole"
+  }

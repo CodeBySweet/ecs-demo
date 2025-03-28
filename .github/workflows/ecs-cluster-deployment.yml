@@ -195,21 +195,24 @@ jobs:
     - name: Prepare Task Definition
       id: prepare-task-def
       run: |
-        # Perform all replacements using jq for safe JSON handling
+        # Get values from Terraform outputs
+        EXECUTION_ROLE_ARN="${{ needs.terraform.outputs.ecs_task_execution_role_arn }}"
+        TASK_ROLE_ARN="${{ needs.terraform.outputs.ecs_task_role_arn }}"
+        
+        # Update placeholders using jq
         jq \
           --arg image "${{ steps.build-image.outputs.image }}" \
-          --arg execution_role "${{ needs.terraform.outputs.ecs_task_execution_role_arn }}" \
-          --arg task_role "${{ needs.terraform.outputs.ecs_task_role_arn }}" \
+          --arg execution_role "$EXECUTION_ROLE_ARN" \
+          --arg task_role "$TASK_ROLE_ARN" \
           '.containerDefinitions[0].image = $image |
-           .executionRoleArn = $execution_role |
-           .taskRoleArn = $task_role' \
+          .executionRoleArn = $execution_role |
+          .taskRoleArn = $task_role' \
           task-definition.json > updated-task-definition.json
         
-        # Validate the result
+        # Validate JSON
+        jq empty updated-task-definition.json
         echo "Final task definition:"
         cat updated-task-definition.json
-        jq empty updated-task-definition.json  # Validate JSON syntax
-
     # ----------------------------------
     # Step: Deploy to ECS
     # Description: Deploys the new task definition to ECS service
