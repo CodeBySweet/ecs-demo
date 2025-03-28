@@ -32,44 +32,49 @@ jobs:
 
     steps:
     # ----------------------------------
-    # Step 1: Checkout the code
+    # Step 1: Repository Checkout
     # ----------------------------------
     - name: Checkout repository
       uses: actions/checkout@v3
+      description: 'Checks out the repository code to the GitHub Actions runner'
 
     # ----------------------------------
-    # Step 2: Configure AWS credentials
+    # Step 2: AWS Credentials Setup
     # ----------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
+      description: 'Configures AWS credentials using secrets stored in GitHub'
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
     # ----------------------------------
-    # Step 3: Setup Terraform
+    # Step 3: Terraform Installation
     # ----------------------------------
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
+      description: 'Installs the specified version of Terraform on the runner'
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
     # ----------------------------------
-    # Step 4: Initialize Terraform
+    # Step 4: Terraform Initialization
     # ----------------------------------
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
+      description: 'Initializes Terraform working directory and downloads providers'
 
     # ----------------------------------
-    # Step 5: Run Terraform Operation
+    # Step 5: Terraform Execution
     # ----------------------------------
     - name: Run Terraform
       id: terraform
       working-directory: ${{ env.TF_WORKING_DIR }}
+      description: 'Executes the specified Terraform action (plan/apply/destroy)'
       run: |
         if [ "${{ github.event.inputs.terraform_action }}" == "plan" ]; then
           terraform plan -input=false -var="sns_topic_arn=${{ vars.SNS_TOPIC_ARN || secrets.SNS_TOPIC_ARN }}"
@@ -81,21 +86,19 @@ jobs:
         echo "status=success" >> $GITHUB_OUTPUT
 
     # ----------------------------------
-    # Step 6: Generate task-definition.json
+    # Step 6: Task Definition Generation
     # ----------------------------------
     - name: Generate Task Definition
       if: github.event.inputs.terraform_action != 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
+      description: 'Generates task-definition.json from Terraform outputs for ECS deployment'
       run: |
-        # Only generate if we did an apply (when outputs are available)
         if [ "${{ github.event.inputs.terraform_action }}" == "apply" ]; then
           terraform output -raw container_definitions > task-definition.json
           echo "Generated task-definition.json:"
           cat task-definition.json
         else
           echo "Skipping task definition generation for ${{ github.event.inputs.terraform_action }}"
-          # For plan, you might want to use a template file instead
-          # or skip the build-scan-deploy job entirely for plan operations
         fi
 
   build-scan-deploy:
@@ -108,32 +111,47 @@ jobs:
 
     steps:
     # ----------------------------------
-    # Step 1: Checkout the code
+    # Step 1: Repository Checkout
     # ----------------------------------
     - name: Checkout repository
       uses: actions/checkout@v3
+      description: 'Checks out the repository code to the GitHub Actions runner'
 
     # ----------------------------------
-    # Step 2: Configure AWS credentials
+    # Step 2: AWS Credentials Setup
     # ----------------------------------
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
+      description: 'Configures AWS credentials using secrets stored in GitHub'
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
     # ----------------------------------
-    # Step 3: Login to Amazon ECR
+    # Step 3: ECR Repository Verification
+    # ----------------------------------
+    - name: Verify ECR Repository
+      description: 'Verifies that the ECR repository exists before proceeding'
+      run: |
+        aws ecr describe-repositories \
+          --repository-names $ECR_REPOSITORY \
+          --region $AWS_REGION || \
+        (echo "ECR repository not found - did Terraform apply complete successfully?" && exit 1)
+
+    # ----------------------------------
+    # Step 4: ECR Login
     # ----------------------------------
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
+      description: 'Authenticates with Amazon ECR to enable Docker pushes'
 
     # ----------------------------------
-    # Step 4: Verify task definition
+    # Step 5: Task Definition Verification
     # ----------------------------------
     - name: Verify Task Definition
+      description: 'Verifies the task-definition.json file exists and is valid'
       run: |
         if [ ! -f "task-definition.json" ]; then
           echo "::error::task-definition.json not found!"
@@ -143,10 +161,11 @@ jobs:
         cat task-definition.json
 
     # ----------------------------------
-    # Step 5: Build Docker image
+    # Step 6: Docker Image Build
     # ----------------------------------
     - name: Build Docker Image
       id: build-image
+      description: 'Builds the Docker image from the specified Dockerfile'
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
         IMAGE_TAG: ${{ github.sha }}
@@ -156,20 +175,22 @@ jobs:
         echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
     # ----------------------------------
-    # Step 6: Push to ECR
+    # Step 7: Image Push to ECR
     # ----------------------------------
     - name: Push to ECR
       id: push-image
+      description: 'Pushes the built Docker image to Amazon ECR'
       run: |
         docker push ${{ steps.build-image.outputs.image }}
         sleep 5  # Brief pause before scan
 
     # ----------------------------------
-    # Step 7: Initiate ECR Image Scan
+    # Step 8: Security Scan Initiation
     # ----------------------------------
     - name: Start Image Security Scan
       id: start-scan
       continue-on-error: true
+      description: 'Initiates a security scan of the pushed Docker image (non-blocking)'
       run: |
         echo "Initiating async security scan for image: ${{ steps.build-image.outputs.image }}"
         aws ecr start-image-scan \
@@ -178,10 +199,11 @@ jobs:
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
     # ----------------------------------
-    # Step 8: Deploy to ECS
+    # Step 9: ECS Deployment
     # ----------------------------------
     - name: Deploy to ECS
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v3
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      description: 'Deploys the task definition to Amazon ECS service with the new image'
       with:
         task-definition: ./task-definition.json
         container-name: "my-app-container"
