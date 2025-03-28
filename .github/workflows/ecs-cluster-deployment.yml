@@ -72,7 +72,7 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       if: ${{ github.event.inputs.terraform_action == 'apply' && steps.terraform.outcome == 'success' }}
       run: |
-        echo "container_definitions=$(terraform output -raw container_definitions)" >> $GITHUB_OUTPUT
+        echo "container_definitions=$(terraform output -raw container_definitions | jq -c)" >> $GITHUB_OUTPUT
         echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
 
   build-scan-deploy:
@@ -107,11 +107,15 @@ jobs:
 
     - name: Generate Task Definition
       run: |
-        cat <<EOF > task-definition.json
-        ${{ needs.terraform.outputs.container_definitions }}
-        EOF
+        # Use jq to ensure valid JSON formatting
+        echo '${{ needs.terraform.outputs.container_definitions }}' | jq '.' > task-definition.json
         echo "Generated task-definition.json:"
         cat task-definition.json
+
+    - name: Validate Task Definition
+      run: |
+        jq empty task-definition.json
+        echo "Task definition is valid JSON"
 
     - name: Build Docker Image
       id: build-image
@@ -140,9 +144,9 @@ jobs:
           --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
 
     - name: Deploy to ECS
-      uses: aws-actions/amazon-ecs-deploy-task-definition@v1
+      uses: aws-actions/amazon-ecs-deploy-task-definition@v2
       with:
-        task-definition: ./task-definition.json
+        task-definition: task-definition.json
         container-name: "my-app-container"
         image: ${{ steps.build-image.outputs.image }}
         service: ${{ env.ECS_SERVICE }}
