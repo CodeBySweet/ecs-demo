@@ -13,7 +13,7 @@ variable "sg_ports" {
 variable "grafana_anonymous_enabled" {
   description = "Enable anonymous access to Grafana"
   type        = bool
-  default     = false
+  default     = true
 }
 
 variable "grafana_anonymous_org_role" {

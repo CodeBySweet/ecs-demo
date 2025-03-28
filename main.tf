@@ -90,7 +90,7 @@ resource "aws_ecs_task_definition" "my_task" {
   network_mode             = "awsvpc"
   requires_compatibilities = ["FARGATE"]
   cpu                      = "1024"
-  memory                   = "3072"
+  memory                   = "4096"
   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
@@ -99,18 +99,13 @@ resource "aws_ecs_task_definition" "my_task" {
       name      = "my-app-container"
       image     = "626635421987.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
       cpu       = 1024
-      memory    = 3072
+      memory    = 4096
       essential = true
 
       portMappings = [
         {
           containerPort = 5000 # Flask app endpoint
           hostPort      = 5000
-          protocol      = "tcp"
-        },
-        {
-          containerPort = 80 # Added for health checks
-          hostPort      = 80
           protocol      = "tcp"
         }
       ]
@@ -127,10 +122,10 @@ resource "aws_ecs_task_definition" "my_task" {
       # Health check configuration
       healthCheck = {
         command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
-        interval    = 30
+        interval    = 15
         retries     = 5
-        startPeriod = 120
-        timeout     = 5
+        startPeriod = 180
+        timeout     = 10
       }
     }
   ])
