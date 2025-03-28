@@ -191,8 +191,8 @@ jobs:
     - name: Deploy to ECS
       uses: aws-actions/amazon-ecs-deploy-task-definition@v1
       with:
-        task-definition: ${{ env.TF_WORKING_DIR }}/task-definition.json
-        container-name: "app-container"
+        task-definition: ./task-definition.json
+        container-name: "my-app-container"
         image: ${{ steps.build-image.outputs.image }}
         service: ${{ env.ECS_SERVICE }}
         cluster: ${{ env.ECS_CLUSTER }}
