@@ -135,15 +135,6 @@ resource "aws_ecs_task_definition" "my_task" {
   ])
 }
 
-resource "local_file" "task_definition" {
-  filename = "${path.root}/task-definition.json"
-  content  = aws_ecs_task_definition.my_task.container_definitions
-}
-
-output "container_definitions" {
-  description = "The container definitions for the ECS task"
-  value       = aws_ecs_task_definition.my_task.container_definitions
-}
 
 # Create an ECS cluster with Container Insights enabled
 resource "aws_ecs_cluster" "my_cluster" {
@@ -197,6 +188,11 @@ resource "local_file" "task_definition" {
     task_memory      = "3072"
   })
   filename = "${path.module}/task-definition.json"
+}
+
+output "container_definitions" {
+  description = "The container definitions for the ECS task"
+  value       = aws_ecs_task_definition.my_task.container_definitions
 }
 
 # CloudWatch Alarm for High CPU Utilization
