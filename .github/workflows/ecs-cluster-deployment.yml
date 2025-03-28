@@ -200,24 +200,26 @@ jobs:
         TASK_ROLE_ARN="${{ needs.terraform.outputs.ecs_task_role_arn }}"
         
         # Render the template with actual values
+        # Note: Numeric values (CPU, memory, ports) must NOT be quoted
         sed \
-          -e "s|{{EXECUTION_ROLE_ARN}}|$EXECUTION_ROLE_ARN|g" \
-          -e "s|{{TASK_ROLE_ARN}}|$TASK_ROLE_ARN|g" \
-          -e "s|{{IMAGE}}|${{ steps.build-image.outputs.image }}|g" \
-          -e "s|{{CONTAINER_NAME}}|my-app-container|g" \
-          -e "s|{{CONTAINER_CPU}}|1024|g" \
-          -e "s|{{CONTAINER_MEMORY}}|3072|g" \
-          -e "s|{{CONTAINER_PORT}}|5000|g" \
-          -e "s|{{LOG_GROUP}}|/ecs/my-app-task|g" \
-          -e "s|{{AWS_REGION}}|us-east-1|g" \
-          -e "s|{{FAMILY_NAME}}|my-app-task|g" \
-          -e "s|{{TASK_CPU}}|1024|g" \
-          -e "s|{{TASK_MEMORY}}|3072|g" \
+          -e "s|\"{{EXECUTION_ROLE_ARN}}\"|\"$EXECUTION_ROLE_ARN\"|g" \
+          -e "s|\"{{TASK_ROLE_ARN}}\"|\"$TASK_ROLE_ARN\"|g" \
+          -e "s|\"{{IMAGE}}\"|\"${{ steps.build-image.outputs.image }}\"|g" \
+          -e "s|\"{{CONTAINER_NAME}}\"|\"my-app-container\"|g" \
+          -e "s|\"{{CONTAINER_CPU}}\"|1024|g" \  # Removed quotes
+          -e "s|\"{{CONTAINER_MEMORY}}\"|3072|g" \  # Removed quotes
+          -e "s|\"{{CONTAINER_PORT}}\"|5000|g" \  # Removed quotes
+          -e "s|\"{{LOG_GROUP}}\"|\"/ecs/my-app-task\"|g" \
+          -e "s|\"{{AWS_REGION}}\"|\"us-east-1\"|g" \
+          -e "s|\"{{FAMILY_NAME}}\"|\"my-app-task\"|g" \
+          -e "s|\"{{TASK_CPU}}\"|1024|g" \  # Removed quotes
+          -e "s|\"{{TASK_MEMORY}}\"|3072|g" \  # Removed quotes
           task-definition.json.tpl > task-definition.json
         
-        # Validate JSON
+        # Validate JSON and check numeric values
         jq empty task-definition.json
-        echo "Final task definition:"
+        echo "Final task definition (validating numeric fields):"
+        jq '.containerDefinitions[0].cpu, .containerDefinitions[0].memory, .containerDefinitions[0].portMappings[0].containerPort, .cpu, .memory' task-definition.json
         cat task-definition.json
     # ----------------------------------
     # Step: Deploy to ECS
