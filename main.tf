@@ -11,10 +11,6 @@ data "aws_subnets" "existing_subnets" {
   }
 }
 
-locals {
-  alb_subnets = slice(data.aws_subnets.existing_subnets.ids, 0, 2)
-}
-
 # Create a security group for the application
 resource "aws_security_group" "my_sg" {
   name        = "my-app-sg"
@@ -182,7 +178,7 @@ resource "aws_lb" "app" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
-  subnets            = local.alb_subnets
+  subnets            = ["subnet-0859bd81a92ddf92b", "subnet-07094ff379a1fe8ac"]
 
   enable_deletion_protection = false
 
