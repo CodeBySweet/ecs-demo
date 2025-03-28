@@ -135,6 +135,11 @@ resource "aws_ecs_task_definition" "my_task" {
   ])
 }
 
+resource "local_file" "task_definition" {
+  filename = "${path.module}/task-definition.json"
+  content  = aws_ecs_task_definition.my_task.container_definitions
+}
+
 # Create an ECS cluster with Container Insights enabled
 resource "aws_ecs_cluster" "my_cluster" {
   name = "my-app-cluster"
