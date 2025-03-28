@@ -9,6 +9,14 @@ data "aws_subnets" "existing_subnets" {
     name   = "vpc-id"
     values = [data.aws_vpc.existing_vpc.id]
   }
+    filter {
+    name   = "availability-zone"
+    values = ["us-east-1a"] 
+  }
+}
+
+locals {
+  alb_subnets = data.aws_subnets.aexisting_subnets.ids
 }
 
 # Create a security group for the application
@@ -178,7 +186,7 @@ resource "aws_lb" "app" {
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb_sg.id]
-  subnets            = local.subnets
+  subnets            = local.alb_subnets
 
   enable_deletion_protection = false
 
