@@ -179,6 +179,26 @@ resource "aws_ecs_service" "my_service" {
   }
 }
 
+resource "local_file" "task_definition" {
+  content = templatefile("${path.module}/task-definition.json.tpl", {
+    # Required variables
+    execution_role_arn = aws_iam_role.ecs_task_execution_role.arn
+    container_image    = "123456789012.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
+    
+    # Optional variables (customize as needed)
+    container_name    = "my-app-container"
+    container_cpu     = 1024
+    container_memory  = 3072
+    container_port    = 5000
+    log_group        = "/ecs/my-app-task"
+    aws_region       = "us-east-1"
+    family_name      = "my-app-task"
+    task_cpu         = "1024"
+    task_memory      = "3072"
+  })
+  filename = "${path.module}/task-definition.json"
+}
+
 # CloudWatch Alarm for High CPU Utilization
 resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
   alarm_name          = "HighCPUUtilization"
