@@ -48,15 +48,15 @@ resource "aws_iam_role_policy" "ecs_task_policy" {
         ]
         Resource = "*"
       },
-      		{
-			"Effect": "Allow",
-			"Action": [
-				"logs:CreateLogGroup",
-				"logs:CreateLogStream",
-				"logs:PutLogEvents"
-			],
-			"Resource": "*"
-		}
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        "Resource" : "*"
+      }
     ]
   })
 }
@@ -90,8 +90,8 @@ resource "aws_iam_role_policy" "ecr_access" {
         "ecr:TagResource"
       ]
       Resource = "*"
-    },
-    {
+      },
+      {
         Effect = "Allow",
         Action = [
           "ecr:PutImage",

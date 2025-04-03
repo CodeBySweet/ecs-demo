@@ -251,15 +251,15 @@ output "alb_dns_name" {
 
 resource "local_file" "task_definition" {
   filename = "${path.root}/task-definition.json"
-  content  = jsonencode({
-    family                   = aws_ecs_task_definition.my_task.family
-    executionRoleArn         = aws_ecs_task_definition.my_task.execution_role_arn
-    taskRoleArn              = aws_ecs_task_definition.my_task.task_role_arn
-    networkMode              = aws_ecs_task_definition.my_task.network_mode
-    requiresCompatibilities  = aws_ecs_task_definition.my_task.requires_compatibilities
-    cpu                      = aws_ecs_task_definition.my_task.cpu
-    memory                   = aws_ecs_task_definition.my_task.memory
-    containerDefinitions     = jsondecode(aws_ecs_task_definition.my_task.container_definitions)
+  content = jsonencode({
+    family                  = aws_ecs_task_definition.my_task.family
+    executionRoleArn        = aws_ecs_task_definition.my_task.execution_role_arn
+    taskRoleArn             = aws_ecs_task_definition.my_task.task_role_arn
+    networkMode             = aws_ecs_task_definition.my_task.network_mode
+    requiresCompatibilities = aws_ecs_task_definition.my_task.requires_compatibilities
+    cpu                     = aws_ecs_task_definition.my_task.cpu
+    memory                  = aws_ecs_task_definition.my_task.memory
+    containerDefinitions    = jsondecode(aws_ecs_task_definition.my_task.container_definitions)
   })
 }
 
