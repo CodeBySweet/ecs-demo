@@ -154,7 +154,7 @@ jobs:
         driver-opts: |
           image=moby/buildkit:latest
 
-    # Step 7: Build and Push with Buildx
+    # Step 7: Build and Push with Buildx (using GitHub cache)
     - name: Build and Push with Buildx
       id: build-push
       uses: docker/build-push-action@v4
@@ -163,14 +163,8 @@ jobs:
         file: ${{ env.DOCKERFILE_PATH }}
         tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
         push: true
-        cache-from: |
-          type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache
-          type=local,src=/tmp/.buildx-cache
-        cache-to: |
-          type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache,mode=max
-          type=local,dest=/tmp/.buildx-cache-new,mode=max
-      env:
-        ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
 
     # Step 8: Start Image Security Scan
     - name: Start Image Security Scan
