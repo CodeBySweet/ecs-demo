@@ -35,11 +35,11 @@ jobs:
       ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn || 'none' }}
 
     steps:
-    # Step 1: Checkout repository
+    # Step 1: Checkout repository - Gets the source code for Terraform to use
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # Step 2: Configure AWS credentials
+    # Step 2: Configure AWS credentials - Sets up AWS access for Terraform operations
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -47,7 +47,7 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Step 3: Cache Terraform plugins
+    # Step 3: Cache Terraform plugins - Speeds up runs by caching provider plugins
     - name: Cache Terraform plugins
       uses: actions/cache@v3
       id: tf-cache
@@ -57,44 +57,54 @@ jobs:
           ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
         key: tf-${{ hashFiles('${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl') }}
 
-    # Step 4: Setup Terraform
+    # Step 4: Setup Terraform - Installs the specified Terraform version
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
-    # Step 5: Terraform Init
+    # Step 5: Terraform Format Check - Ensures consistent code formatting
+    - name: Terraform Format Check
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform fmt -check -diff -recursive
+
+    # Step 6: Terraform Init - Initializes the Terraform working directory
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
-    # Step 6: Run Terraform Plan
+    # Step 7: Terraform Validate - Checks for syntax errors
+    - name: Terraform Validate
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform validate
+
+    # Step 8: Terraform Plan - Shows execution plan (dry-run)
     - name: Terraform Plan
       if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform plan -input=false -no-color
 
-    # Step 7: Run Terraform Apply
+    # Step 9: Terraform Apply - Creates/updates infrastructure
     - name: Terraform Apply
       if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform apply -input=false -auto-approve
 
-    # Step 8: Run Terraform Destroy
+    # Step 10: Terraform Destroy - Removes all infrastructure
     - name: Terraform Destroy
       if: github.event.inputs.terraform_action == 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform destroy -input=false -auto-approve
 
-    # Step 9: Set Status
+    # Step 11: Set Status - Marks operation as successful
     - name: Set Status
       id: set-status
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: echo "status=success" >> $GITHUB_OUTPUT
 
-    # Step 10: Capture Terraform Outputs (only for apply)
+    # Step 12: Capture Terraform Outputs - Saves outputs for build job
     - name: Capture Terraform Outputs
       id: set-outputs
       if: github.event.inputs.terraform_action == 'apply'
@@ -113,11 +123,11 @@ jobs:
       needs.terraform.outputs.operation_status == 'success'
 
     steps:
-    # Step 1: Checkout repository
+    # Step 1: Checkout repository - Gets source code for Docker build
     - name: Checkout repository
       uses: actions/checkout@v3
 
-    # Step 2: Configure AWS credentials
+    # Step 2: Configure AWS credentials - Sets up AWS access for ECR/ECS
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
@@ -125,28 +135,28 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Step 3: Verify ECR Repository
+    # Step 3: Verify ECR Repository - Confirms repository exists
     - name: Verify ECR Repository
       run: |
         aws ecr describe-repositories \
           --repository-names $ECR_REPOSITORY \
           --region $AWS_REGION
 
-    # Step 4: Login to Amazon ECR
+    # Step 4: Login to Amazon ECR - Authenticates Docker with ECR
     - name: Login to Amazon ECR
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # Step 5: Cache Docker layers
-    - name: Cache Docker layers
-      uses: actions/cache@v3
+    # Step 5: Docker Metadata Action - Generates image tags/labels
+    - name: Docker Metadata Action
+      id: meta
+      uses: docker/metadata-action@v4
       with:
-        path: /tmp/.buildx-cache
-        key: ${{ runner.os }}-buildx-${{ github.sha }}
-        restore-keys: |
-          ${{ runner.os }}-buildx-
+        images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+        tags: |
+          type=raw,value=${{ env.IMAGE_TAG }},enable=${{ true }}
 
-    # Step 6: Set up Docker Buildx
+    # Step 6: Set up Docker Buildx - Configures advanced build features
     - name: Set up Docker Buildx
       id: buildx
       uses: docker/setup-buildx-action@v2
@@ -154,30 +164,87 @@ jobs:
         driver-opts: |
           image=moby/buildkit:latest
 
-    # Step 7: Build and Push with Buildx (using GitHub cache)
+    # Step 7: Build and Push with Buildx - Builds and pushes container image
     - name: Build and Push with Buildx
       id: build-push
       uses: docker/build-push-action@v4
       with:
         context: .
         file: ${{ env.DOCKERFILE_PATH }}
-        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        platforms: linux/amd64
+        tags: ${{ steps.meta.outputs.tags }}
+        labels: ${{ steps.meta.outputs.labels }}
         push: true
         cache-from: type=gha
-        cache-to: type=gha,mode=max
+        cache-to: type=gha,mode=max,compression=zstd
 
-    # Step 8: Start Image Security Scan
+    # Step 8: Verify Image Before Scan - Confirms image exists in ECR
+    - name: Verify Image Before Scan
+      run: |
+        aws ecr describe-images \
+          --repository-name ${{ env.ECR_REPOSITORY }} \
+          --image-ids imageTag=${{ env.IMAGE_TAG }} \
+          --region ${{ env.AWS_REGION }}
+
+    # Step 9: Start Image Security Scan - Initiates vulnerability scan
     - name: Start Image Security Scan
       id: start-scan
-      continue-on-error: true
+      continue-on-error: false
       run: |
-        echo "Initiating async security scan for image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
+        echo "Initiating security scan for image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
         aws ecr start-image-scan \
           --repository-name ${{ env.ECR_REPOSITORY }} \
           --image-id imageTag=${{ env.IMAGE_TAG }} \
-          --region ${{ env.AWS_REGION }} || echo "Scan initiation failed - continuing deployment"
+          --region ${{ env.AWS_REGION }}
+        echo "Scan initiated successfully"
 
-    # Step 9: Create imagedefinitions.json
+    # Step 10: Wait for Scan Completion - Polls for scan results
+    - name: Wait for Scan Completion
+      if: always()
+      run: |
+        echo "Waiting for scan to complete..."
+        for i in {1..10}; do
+          SCAN_STATUS=$(aws ecr describe-image-scan-findings \
+            --repository-name ${{ env.ECR_REPOSITORY }} \
+            --image-id imageTag=${{ env.IMAGE_TAG }} \
+            --region ${{ env.AWS_REGION }} \
+            --query 'imageScanStatus.status' \
+            --output text 2>/dev/null || echo "PENDING")
+          
+          if [ "$SCAN_STATUS" = "COMPLETE" ]; then
+            echo "Scan completed successfully"
+            exit 0
+          elif [ "$SCAN_STATUS" = "FAILED" ]; then
+            echo "Scan failed"
+            exit 1
+          fi
+          
+          sleep 30
+        done
+        echo "Scan did not complete within 5 minutes"
+        exit 1
+
+    # Step 11: Check Scan Findings - Fails on critical vulnerabilities
+    - name: Check Scan Findings
+      if: always()
+      run: |
+        FINDINGS=$(aws ecr describe-image-scan-findings \
+          --repository-name ${{ env.ECR_REPOSITORY }} \
+          --image-id imageTag=${{ env.IMAGE_TAG }} \
+          --region ${{ env.AWS_REGION }} \
+          --query 'imageScanFindings.findingSeverityCounts' \
+          --output json)
+        
+        echo "Scan findings: $FINDINGS"
+        CRITICAL=$(echo $FINDINGS | jq '.CRITICAL // 0')
+        HIGH=$(echo $FINDINGS | jq '.HIGH // 0')
+        
+        if [ $CRITICAL -gt 0 ] || [ $HIGH -gt 0 ]; then
+          echo "Critical or High severity vulnerabilities found"
+          exit 1
+        fi
+
+    # Step 12: Create imagedefinitions.json - Prepares ECS deployment config
     - name: Create imagedefinitions.json
       run: |
         echo '[{
@@ -185,10 +252,19 @@ jobs:
           "imageUri": "'${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}'"
         }]' > imagedefinitions.json
 
-    # Step 10: Update ECS Service
+    # Step 13: Update ECS Service - Deploys new container version
     - name: Update ECS Service
       run: |
         aws ecs update-service \
           --cluster ${{ env.ECS_CLUSTER }} \
           --service ${{ env.ECS_SERVICE }} \
           --force-new-deployment
+
+    # Step 14: Verify Deployment - Ensures new tasks are healthy
+    - name: Verify Deployment
+      run: |
+        echo "Waiting for deployment to stabilize..."
+        aws ecs wait services-stable \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.ECS_SERVICE }} \
+          --region ${{ env.AWS_REGION }}
