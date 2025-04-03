@@ -47,44 +47,54 @@ jobs:
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
 
-    # Step 3: Setup Terraform
+    # Step 3: Cache Terraform plugins
+    - name: Cache Terraform plugins
+      uses: actions/cache@v3
+      id: tf-cache
+      with:
+        path: |
+          ${{ env.TF_WORKING_DIR }}/.terraform
+          ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
+        key: tf-${{ hashFiles('${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl') }}
+
+    # Step 4: Setup Terraform
     - name: Setup Terraform
       uses: hashicorp/setup-terraform@v2
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
 
-    # Step 4: Terraform Init
+    # Step 5: Terraform Init
     - name: Terraform Init
       id: init
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform init
 
-    # Step 5: Run Terraform Plan
+    # Step 6: Run Terraform Plan
     - name: Terraform Plan
       if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform plan -input=false -no-color
 
-    # Step 6: Run Terraform Apply
+    # Step 7: Run Terraform Apply
     - name: Terraform Apply
       if: github.event.inputs.terraform_action == 'apply'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform apply -input=false -auto-approve
 
-    # Step 7: Run Terraform Destroy
+    # Step 8: Run Terraform Destroy
     - name: Terraform Destroy
       if: github.event.inputs.terraform_action == 'destroy'
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform destroy -input=false -auto-approve
 
-    # Step 8: Set Status
+    # Step 9: Set Status
     - name: Set Status
       id: set-status
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: echo "status=success" >> $GITHUB_OUTPUT
 
-    # Step 9: Capture Terraform Outputs (only for apply)
+    # Step 10: Capture Terraform Outputs (only for apply)
     - name: Capture Terraform Outputs
       id: set-outputs
       if: github.event.inputs.terraform_action == 'apply'
@@ -127,43 +137,61 @@ jobs:
       id: login-ecr
       uses: aws-actions/amazon-ecr-login@v1
 
-    # Step 5: Build Docker Image
-    - name: Build Docker Image
-      id: build-image
+    # Step 5: Cache Docker layers
+    - name: Cache Docker layers
+      uses: actions/cache@v3
+      with:
+        path: /tmp/.buildx-cache
+        key: ${{ runner.os }}-buildx-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-buildx-
+
+    # Step 6: Set up Docker Buildx
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v2
+      with:
+        driver-opts: |
+          image=moby/buildkit:latest
+
+    # Step 7: Build and Push with Buildx
+    - name: Build and Push with Buildx
+      id: build-push
+      uses: docker/build-push-action@v4
+      with:
+        context: .
+        file: ${{ env.DOCKERFILE_PATH }}
+        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        push: true
+        cache-from: |
+          type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache
+          type=local,src=/tmp/.buildx-cache
+        cache-to: |
+          type=registry,ref=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:buildcache,mode=max
+          type=local,dest=/tmp/.buildx-cache-new,mode=max
       env:
         ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-      run: |
-        docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG -f $DOCKERFILE_PATH .
-        echo "image=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-    # Step 6: Push to ECR
-    - name: Push to ECR
-      id: push-image
-      run: |
-        docker push ${{ steps.build-image.outputs.image }}
-        sleep 5
-
-    # Step 7: Start Image Security Scan
+    # Step 8: Start Image Security Scan
     - name: Start Image Security Scan
       id: start-scan
       continue-on-error: true
       run: |
-        echo "Initiating async security scan for image: ${{ steps.build-image.outputs.image }}"
+        echo "Initiating async security scan for image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
         aws ecr start-image-scan \
-          --repository-name $ECR_REPOSITORY \
-          --image-id imageTag=${{ steps.build-image.outputs.image_tag }} \
-          --region $AWS_REGION || echo "Scan initiation failed - continuing deployment"
+          --repository-name ${{ env.ECR_REPOSITORY }} \
+          --image-id imageTag=${{ env.IMAGE_TAG }} \
+          --region ${{ env.AWS_REGION }} || echo "Scan initiation failed - continuing deployment"
 
-    # Step 8: Create imagedefinitions.json
+    # Step 9: Create imagedefinitions.json
     - name: Create imagedefinitions.json
       run: |
         echo '[{
           "name": "my-app-container",
-          "imageUri": "'${{ steps.build-image.outputs.image }}'"
+          "imageUri": "'${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}'"
         }]' > imagedefinitions.json
 
-    # Step 9: Update ECS Service
+    # Step 10: Update ECS Service
     - name: Update ECS Service
       run: |
         aws ecs update-service \
