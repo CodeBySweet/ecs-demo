@@ -23,5 +23,6 @@ output "ecs_task_role_arn" {
 }
 
 output "task_definition" {
-  value = local_file.task_definition.content
+  value     = local_file.task_definition.content
+  sensitive = true
 }

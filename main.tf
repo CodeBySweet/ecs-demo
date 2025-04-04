@@ -86,7 +86,7 @@ locals {
 
 # Your secret name in Secrets Manager
 data "aws_secretsmanager_secret" "account_id" {
-  arn = "arn:aws:secretsmanager:us-east-1:626635421987:secret:my-app/account-id-PNNNye"
+  name = account_id
 }
 
 data "aws_secretsmanager_secret_version" "account_id" {
@@ -94,7 +94,7 @@ data "aws_secretsmanager_secret_version" "account_id" {
 }
 
 locals {
-  account_id = data.aws_secretsmanager_secret_version.account_id.secret_string
+  account_id = jsondecode(data.aws_secretsmanager_secret_version.account_id.secret_string)["account_id"]
 }
 
 # Create an ECS task definition for the application
@@ -280,6 +280,7 @@ resource "local_file" "task_definition" {
 output "container_definitions" {
   description = "The container definitions for the ECS task"
   value       = aws_ecs_task_definition.my_task.container_definitions
+  sensitive   = true
 }
 
 # CloudWatch Alarm for High CPU Utilization
