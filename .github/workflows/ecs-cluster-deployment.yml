@@ -184,34 +184,39 @@ jobs:
     - name: Create Trivy cache directory
       run: mkdir -p /tmp/trivy-cache
 
-    # Step 9: Scan for Critical vulnerabilities
+    # Step 9: Install Trivy
+    - name: Install Trivy
+      uses: aquasecurity/trivy-action@d50a6d40b8e61a249f2b1a4f31f7f3f8a7f8f8b7 # Specific commit hash
+      with:
+        trivy-version: '0.49.1' # Specific version
+
+    # Step 10: Scan for Critical vulnerabilities
     - name: Scan for Critical vulnerabilities
       id: trivy-scan
-      uses: aquasecurity/trivy-action@0.19
-      with:
-        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        format: 'json'
-        output: 'trivy-results.json'
-        severity: 'CRITICAL'
-        ignore-unfixed: true
-        scanners: 'vuln'
-        exit-code: '1'
-        cache-dir: '/tmp/trivy-cache'
+      run: |
+        trivy image \
+          --severity CRITICAL \
+          --ignore-unfixed \
+          --exit-code 1 \
+          --format json \
+          --scanners vuln \
+          --cache-dir /tmp/trivy-cache \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} > trivy-results.json
 
-    # Step 10: Scan for High vulnerabilities (warning only)
+    # Step 11: Scan for High vulnerabilities (warning only)
     - name: Scan for High vulnerabilities
       if: always()
-      uses: aquasecurity/trivy-action@0.19
-      with:
-        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        format: 'json'
-        severity: 'HIGH'
-        ignore-unfixed: true
-        scanners: 'vuln'
-        exit-code: '0'
-        cache-dir: '/tmp/trivy-cache'
+      run: |
+        trivy image \
+          --severity HIGH \
+          --ignore-unfixed \
+          --exit-code 0 \
+          --format json \
+          --scanners vuln \
+          --cache-dir /tmp/trivy-cache \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-    # Step 11: Upload Trivy results
+    # Step 12: Upload Trivy results
     - name: Upload Trivy results
       if: always()
       uses: actions/upload-artifact@v4
@@ -219,7 +224,7 @@ jobs:
         name: trivy-scan-results
         path: trivy-results.json
 
-    # Step 12: Verify Deployment
+    # Step 13: Verify Deployment
     - name: Verify Deployment
       run: |
         echo "Waiting for deployment to stabilize..."
