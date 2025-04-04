@@ -180,29 +180,58 @@ jobs:
         build-args: |
           BUILDKIT_INLINE_CACHE=1
 
-    # Step 8: Scan image with Trivy - Critical vulnerabilities only (will fail)
-    - name: Scan for Critical vulnerabilities
-      id: trivy-critical-scan
+    # Step 8: Install Trivy (with caching for vulnerability DB)
+    - name: Install Trivy
       uses: aquasecurity/trivy-action@master
       with:
-        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        format: 'table'
-        exit-code: '1'
-        ignore-unfixed: true
-        vuln-type: 'os,library'
-        severity: 'CRITICAL'
-        scan-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        trivy-version: 'latest'
+        skip-cache: false  # Enable caching of vulnerability DB
+        cache-dir: /tmp/trivy-cache
 
-    # Step 9: Scan for High vulnerabilities (warning only)
+    # Step 9: Scan for Critical vulnerabilities
+    - name: Scan for Critical vulnerabilities
+      id: trivy-critical-scan
+      run: |
+        # Run Trivy scan with timeout and proper error handling
+        if ! trivy image \
+          --timeout 5m \
+          --severity CRITICAL \
+          --ignore-unfixed \
+          --no-progress \
+          --format json \
+          --scanners vuln \  # Disable secret scanning to speed up
+          --cache-dir /tmp/trivy-cache \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} > trivy-critical.json; then
+          
+          echo "::error::Trivy scan failed to complete"
+          exit 1
+        fi
+
+        # Count CRITICAL vulnerabilities
+        CRITICAL_COUNT=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL")] | length' trivy-critical.json)
+        
+        if [ "$CRITICAL_COUNT" -gt 0 ]; then
+          echo "::error::Found $CRITICAL_COUNT CRITICAL severity vulnerabilities - blocking deployment"
+          echo "Critical severity vulnerabilities:"
+          jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "CRITICAL") | "\(.VulnerabilityID): \(.Title) (Fixed in: \(.FixedVersion | if . then . else "None" end))"' trivy-critical.json
+          exit 1
+        else
+          echo "No CRITICAL severity vulnerabilities found"
+        fi
+
+    # Step 10: Scan for High vulnerabilities (warning only)
     - name: Scan for High vulnerabilities
       if: always()  # Run even if previous step fails
       run: |
         # Run Trivy scan for HIGH vulnerabilities
         trivy image \
+          --timeout 5m \
           --severity HIGH \
           --ignore-unfixed \
           --no-progress \
           --format json \
+          --scanners vuln \  # Disable secret scanning to speed up
+          --cache-dir /tmp/trivy-cache \
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} > trivy-high.json
         
         # Count HIGH vulnerabilities
@@ -216,7 +245,7 @@ jobs:
           echo "No HIGH severity vulnerabilities found"
         fi
 
-    # Step 10: Update ECS Service - Deploys new container version
+    # Step 11: Update ECS Service - Deploys new container version
     - name: Update ECS Service
       if: steps.trivy-critical-scan.outcome == 'success'  # Only deploy if no CRITICAL vulnerabilities
       run: |
@@ -225,7 +254,7 @@ jobs:
           --service ${{ env.ECS_SERVICE }} \
           --force-new-deployment
 
-    # Step 11: Verify Deployment - Ensures new tasks are healthy
+    # Step 12: Verify Deployment - Ensures new tasks are healthy
     - name: Verify Deployment
       if: steps.trivy-critical-scan.outcome == 'success'  # Only verify if no CRITICAL vulnerabilities
       run: |
