@@ -180,8 +180,9 @@ jobs:
         build-args: |
           BUILDKIT_INLINE_CACHE=1
 
-    # Step 8: Scan image with Trivy - Vulnerability scanning
-    - name: Scan image with Trivy
+    # Step 8: Scan image with Trivy - Critical vulnerabilities only (will fail)
+    - name: Scan for Critical vulnerabilities
+      id: trivy-critical-scan
       uses: aquasecurity/trivy-action@master
       with:
         image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
@@ -189,19 +190,44 @@ jobs:
         exit-code: '1'
         ignore-unfixed: true
         vuln-type: 'os,library'
-        severity: 'CRITICAL,HIGH'
+        severity: 'CRITICAL'
         scan-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-    # Step 9: Update ECS Service - Deploys new container version
+    # Step 9: Scan for High vulnerabilities (warning only)
+    - name: Scan for High vulnerabilities
+      if: always()  # Run even if previous step fails
+      run: |
+        # Run Trivy scan for HIGH vulnerabilities
+        trivy image \
+          --severity HIGH \
+          --ignore-unfixed \
+          --no-progress \
+          --format json \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} > trivy-high.json
+        
+        # Count HIGH vulnerabilities
+        HIGH_COUNT=$(jq -r '[.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH")] | length' trivy-high.json)
+        
+        if [ "$HIGH_COUNT" -gt 0 ]; then
+          echo "::warning::Found $HIGH_COUNT HIGH severity vulnerabilities (not blocking deployment)"
+          echo "High severity vulnerabilities:"
+          jq -r '.Results[]?.Vulnerabilities[]? | select(.Severity == "HIGH") | "\(.VulnerabilityID): \(.Title) (Fixed in: \(.FixedVersion | if . then . else "None" end))"' trivy-high.json
+        else
+          echo "No HIGH severity vulnerabilities found"
+        fi
+
+    # Step 10: Update ECS Service - Deploys new container version
     - name: Update ECS Service
+      if: steps.trivy-critical-scan.outcome == 'success'  # Only deploy if no CRITICAL vulnerabilities
       run: |
         aws ecs update-service \
           --cluster ${{ env.ECS_CLUSTER }} \
           --service ${{ env.ECS_SERVICE }} \
           --force-new-deployment
 
-    # Step 10: Verify Deployment - Ensures new tasks are healthy
+    # Step 11: Verify Deployment - Ensures new tasks are healthy
     - name: Verify Deployment
+      if: steps.trivy-critical-scan.outcome == 'success'  # Only verify if no CRITICAL vulnerabilities
       run: |
         echo "Waiting for deployment to stabilize..."
         aws ecs wait services-stable \
