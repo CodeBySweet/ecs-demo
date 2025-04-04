@@ -225,10 +225,17 @@ jobs:
           --timeout 5m \
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-    # Step 12: Verify Deployment
+    # Step 12: Force New Deployment and Verify
     - name: Verify Deployment
       if: steps.trivy-critical-scan.outcome == 'success'
       run: |
+        echo "Forcing new ECS deployment..."
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE }} \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+
         echo "Waiting for deployment to stabilize..."
         aws ecs wait services-stable \
           --cluster ${{ env.ECS_CLUSTER }} \
