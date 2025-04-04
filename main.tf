@@ -86,7 +86,7 @@ locals {
 
 # Your secret name in Secrets Manager
 data "aws_secretsmanager_secret" "account_id" {
-  name = my-app/account-id
+  name = "my-app/account-id"
 }
 
 data "aws_secretsmanager_secret_version" "account_id" {
