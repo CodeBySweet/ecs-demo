@@ -345,23 +345,18 @@ resource "aws_lb_target_group" "grafana" {
   protocol    = "HTTP"
   vpc_id      = data.aws_vpc.existing_vpc.id
   target_type = "ip"
-
   health_check {
     path                = "/api/health"
     interval            = 30
     healthy_threshold   = 3
     unhealthy_threshold = 3
-    timeout             = 10
     matcher             = "200"
   }
-
-  deregistration_delay = 10
 }
 
 resource "aws_lb_listener_rule" "grafana" {
   listener_arn = aws_lb_listener.http.arn
-  priority     = 100
-
+  priority     = 200
   action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.grafana.arn
@@ -472,6 +467,12 @@ resource "aws_ecs_service" "grafana_service" {
   # Enable service discovery for Grafana
   service_registries {
     registry_arn = aws_service_discovery_service.grafana.arn
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.grafana.arn
+    container_name   = "grafana"
+    container_port   = 3000
   }
 
   depends_on = [aws_lb_listener_rule.grafana]
