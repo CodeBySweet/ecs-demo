@@ -80,11 +80,18 @@ jobs:
       working-directory: ${{ env.TF_WORKING_DIR }}
       run: terraform validate
 
-    # Step 8: Terraform Plan
+    # Step 8: Fixed Terraform Plan
     - name: Terraform Plan
       if: github.event.inputs.terraform_action == 'plan'
       working-directory: ${{ env.TF_WORKING_DIR }}
-      run: terraform plan -input=false -no-color
+      run: |
+        terraform plan -input=false -no-color -detailed-exitcode || \
+        if [ $? -eq 2 ]; then 
+          echo "Terraform plan requires changes (exit code 2)" 
+          exit 0
+        else 
+          exit $?
+        fi
 
     # Step 9: Terraform Apply
     - name: Terraform Apply
