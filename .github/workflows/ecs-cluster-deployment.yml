@@ -171,100 +171,28 @@ jobs:
       with:
         context: .
         file: ${{ env.DOCKERFILE_PATH }}
-        platforms: linux/amd64  # Explicitly specify single platform
-        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:amd64-${{ env.IMAGE_TAG }}  # Platform-specific tag
+        platforms: linux/amd64
+        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
         labels: ${{ steps.meta.outputs.labels }}
         push: true
         cache-from: type=gha
         cache-to: type=gha,mode=max,compression=zstd
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
 
-    # Step 8: Create platform-agnostic tag
-    - name: Create Additional Tag
-      run: |
-        MANIFEST=$(aws ecr batch-get-image \
-          --repository-name ${{ env.ECR_REPOSITORY }} \
-          --image-ids imageTag=amd64-${{ env.IMAGE_TAG }} \
-          --region ${{ env.AWS_REGION }} \
-          --output json | jq -r '.images[0].imageManifest')
-        
-        aws ecr put-image \
-          --repository-name ${{ env.ECR_REPOSITORY }} \
-          --image-tag ${{ env.IMAGE_TAG }} \
-          --image-manifest "$MANIFEST" \
-          --region ${{ env.AWS_REGION }}
+    # Step 8: Scan image with Trivy - Vulnerability scanning
+    - name: Scan image with Trivy
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        format: 'table'
+        exit-code: '1'
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        scan-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
-    # Step 9: Verify Image Before Scan - Confirms image exists in ECR
-    - name: Verify Image Before Scan
-      run: |
-        aws ecr describe-images \
-          --repository-name ${{ env.ECR_REPOSITORY }} \
-          --image-ids imageTag=${{ env.IMAGE_TAG }} \
-          --region ${{ env.AWS_REGION }}
-
-    # Step 10: Start Image Security Scan - Initiates vulnerability scan
-    - name: Start Image Security Scan
-      id: start-scan
-      continue-on-error: false
-      run: |
-        echo "Initiating security scan for image: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
-        aws ecr start-image-scan \
-          --repository-name ${{ env.ECR_REPOSITORY }} \
-          --image-id imageTag=${{ env.IMAGE_TAG }} \
-          --region ${{ env.AWS_REGION }}
-        echo "Scan initiated successfully"
-
-    # Step 11: Wait for Scan Completion - Polls for scan results
-    - name: Wait for Scan Completion
-      id: wait-scan
-      run: |
-        echo "Waiting for scan to complete..."
-        for i in {1..30}; do  # 30 attempts (15 minutes max)
-          SCAN_STATUS=$(aws ecr describe-image-scan-findings \
-            --repository-name ${{ env.ECR_REPOSITORY }} \
-            --image-id imageTag=${{ env.IMAGE_TAG }} \
-            --region ${{ env.AWS_REGION }} \
-            --query 'imageScanStatus.status' \
-            --output text 2>/dev/null || echo "PENDING")
-          
-          echo "Scan status: $SCAN_STATUS (attempt $i/30)"
-          
-          if [ "$SCAN_STATUS" = "COMPLETE" ]; then
-            echo "Scan completed successfully"
-            exit 0
-          elif [ "$SCAN_STATUS" = "FAILED" ]; then
-            echo "Scan failed"
-            exit 1
-          fi
-          
-          sleep 30  # Wait 30 seconds between checks
-        done
-        echo "Error: Scan did not complete within 15 minutes"
-        exit 1
-
-    # Step 12: Check Scan Findings - Fails on critical vulnerabilities
-    - name: Check Scan Findings
-      if: success() || failure()  # Run even if previous steps fail
-      run: |
-        echo "Retrieving scan findings..."
-        FINDINGS=$(aws ecr describe-image-scan-findings \
-          --repository-name ${{ env.ECR_REPOSITORY }} \
-          --image-id imageTag=${{ env.IMAGE_TAG }} \
-          --region ${{ env.AWS_REGION }} \
-          --query 'imageScanFindings.findingSeverityCounts' \
-          --output json)
-        
-        echo "Scan findings: $FINDINGS"
-        CRITICAL=$(echo $FINDINGS | jq -r '.CRITICAL // 0')
-        HIGH=$(echo $FINDINGS | jq -r '.HIGH // 0')
-        
-        if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
-          echo "ERROR: Critical or High severity vulnerabilities found"
-          exit 1
-        else
-          echo "No Critical/High vulnerabilities found"
-        fi
-
-    # Step 13: Update ECS Service - Deploys new container version
+    # Step 9: Update ECS Service - Deploys new container version
     - name: Update ECS Service
       run: |
         aws ecs update-service \
@@ -272,7 +200,7 @@ jobs:
           --service ${{ env.ECS_SERVICE }} \
           --force-new-deployment
 
-    # Step 14: Verify Deployment - Ensures new tasks are healthy
+    # Step 10: Verify Deployment - Ensures new tasks are healthy
     - name: Verify Deployment
       run: |
         echo "Waiting for deployment to stabilize..."
