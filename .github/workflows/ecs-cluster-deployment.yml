@@ -180,21 +180,31 @@ jobs:
         build-args: |
           BUILDKIT_INLINE_CACHE=1
 
-    # Step 8: Install Trivy (with caching for vulnerability DB)
-    - name: Install Trivy
+    # Step 8: Scan for vulnerabilities using Trivy
+    - name: Scan for Critical vulnerabilities
       uses: aquasecurity/trivy-action@master
       with:
-        trivy-version: 'latest'
-        skip-cache: false
-        cache-dir: /tmp/trivy-cache
+        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        format: 'json'
+        output: 'trivy-results.json'
+        severity: 'CRITICAL'
+        ignore-unfixed: true
+        scanners: 'vuln'
+        exit-code: '1'
+        cache-dir: '/tmp/trivy-cache'
 
-    # Step 9: Prepare image reference
-    - name: Set image reference
-      id: image-ref
-      run: |
-        FULL_IMAGE_REF="${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}"
-        echo "full_image_ref=${FULL_IMAGE_REF}" >> $GITHUB_OUTPUT
-        echo "Using image reference: ${FULL_IMAGE_REF}"
+    # Step 9: Optional scan for High vulnerabilities (warning only)
+    - name: Scan for High vulnerabilities
+      if: always()
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        format: 'json'
+        severity: 'HIGH'
+        ignore-unfixed: true
+        scanners: 'vuln'
+        exit-code: '0'  # Don't fail the workflow for High severity
+        cache-dir: '/tmp/trivy-cache'
 
     # Step 10: Scan for Critical vulnerabilities
     - name: Scan for Critical vulnerabilities
