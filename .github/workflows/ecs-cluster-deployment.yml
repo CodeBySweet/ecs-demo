@@ -180,35 +180,28 @@ jobs:
         build-args: |
           BUILDKIT_INLINE_CACHE=1
 
-    # Step 8: Create Trivy cache directory
+ # Step 8: Create Trivy cache directory
     - name: Create Trivy cache directory
       run: mkdir -p /tmp/trivy-cache
 
-    # Step 9: Scan for vulnerabilities using official Trivy action
-    - name: Scan for Critical vulnerabilities
-      uses: aquasecurity/trivy-action@0.19
-      with:
-        image-ref:    ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        format:       'table'
-        severity:     'CRITICAL'
-        ignore-unfixed: true
-        scanners:     'vuln'
-        exit-code:    '1'
-        cache-dir:    '/tmp/trivy-cache'
-        timeout:      '5m'
+    # Step 9: Install Trivy
+    - name: Install Trivy
+      run: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.49.1
 
-    # Step 10: Optional scan for High vulnerabilities (warning only)
-    - name: Scan for High vulnerabilities
-      if: always()
-      uses: aquasecurity/trivy-action@0.19
-      with:
-        image-ref:    ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        format:       'table'
-        severity:     'HIGH'
-        ignore-unfixed: true
-        scanners:     'vuln'
-        exit-code:    '0'
-        cache-dir:    '/tmp/trivy-cache'
+    # Step 10: Scan for Critical vulnerabilities
+    - name: Scan for Critical vulnerabilities
+      id: trivy-critical-scan
+      run: |
+        trivy image \
+          --severity CRITICAL \
+          --ignore-unfixed \
+          --exit-code 1 \
+          --format table \
+          --scanners vuln \
+          --cache-dir /tmp/trivy-cache \
+          --timeout 5m \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
     # Step 11: Scan for High vulnerabilities (warning only)
     - name: Scan for High vulnerabilities
@@ -219,8 +212,10 @@ jobs:
           --ignore-unfixed \
           --exit-code 0 \
           --format json \
+          --output trivy-results.json \
           --scanners vuln \
           --cache-dir /tmp/trivy-cache \
+          --timeout 5m \
           ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
 
     # Step 12: Upload Trivy results
@@ -233,6 +228,7 @@ jobs:
 
     # Step 13: Verify Deployment
     - name: Verify Deployment
+      if: steps.trivy-critical-scan.outcome == 'success'
       run: |
         echo "Waiting for deployment to stabilize..."
         aws ecs wait services-stable \
