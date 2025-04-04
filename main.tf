@@ -339,6 +339,41 @@ resource "aws_cloudwatch_log_group" "my_app_log_group" {
   retention_in_days = 30
 }
 
+resource "aws_lb_target_group" "grafana" {
+  name        = "grafana-tg"
+  port        = 3000
+  protocol    = "HTTP"
+  vpc_id      = data.aws_vpc.existing_vpc.id
+  target_type = "ip"
+
+  health_check {
+    path                = "/api/health"
+    interval            = 30
+    healthy_threshold   = 3
+    unhealthy_threshold = 3
+    timeout             = 10
+    matcher             = "200"
+  }
+
+  deregistration_delay = 10
+}
+
+resource "aws_lb_listener_rule" "grafana" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 100
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.grafana.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/grafana*"]
+    }
+  }
+}
+
 # Update Grafana Task Definition to use the Grafana IAM Role and public image
 resource "aws_ecs_task_definition" "grafana_task" {
   family                   = "grafana-task"
@@ -399,6 +434,14 @@ resource "aws_ecs_task_definition" "grafana_task" {
       {
         name  = "GF_AWS_ASSUME_ROLE_ENABLED",
         value = "true"
+      },
+      {
+        name  = "GF_SERVER_ROOT_URL"
+        value = "http://localhost:3000/grafana"
+      },
+      {
+        name  = "GF_SERVER_SERVE_FROM_SUB_PATH"
+        value = "true"
       }
     ]
 
@@ -430,6 +473,8 @@ resource "aws_ecs_service" "grafana_service" {
   service_registries {
     registry_arn = aws_service_discovery_service.grafana.arn
   }
+
+  depends_on = [aws_lb_listener_rule.grafana]
 }
 
 # Create a CloudWatch Logs log group for monitoring
