@@ -84,6 +84,19 @@ locals {
   my_app_dns_name   = "${aws_ecs_service.my_service.name}.${aws_ecs_service.my_service.cluster}.local"
 }
 
+# Your secret name in Secrets Manager
+data "aws_secretsmanager_secret" "account_id" {
+  name = "account_id" 
+}
+
+data "aws_secretsmanager_secret_version" "account_id" {
+  secret_id = data.aws_secretsmanager_secret.account_id.id
+}
+
+locals {
+  account_id = data.aws_secretsmanager_secret_version.account_id.secret_string
+}
+
 # Create an ECS task definition for the application
 resource "aws_ecs_task_definition" "my_task" {
   family                   = "my-app-task"
@@ -97,7 +110,7 @@ resource "aws_ecs_task_definition" "my_task" {
   container_definitions = jsonencode([
     {
       name      = "my-app-container"
-      image     = "626635421987.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
+      image     = "${local.account_id}.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
       cpu       = 1024
       memory    = 4096
       essential = true
@@ -279,7 +292,7 @@ resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
   period              = 300
   statistic           = "Average"
   threshold           = 80
-  alarm_actions       = ["arn:aws:sns:us-east-1:626635421987:my-sns-topic"]
+  alarm_actions       = ["arn:aws:sns:us-east-1:${local.account_id}:my-sns-topic"]
   dimensions = {
     ClusterName = aws_ecs_cluster.my_cluster.name
     ServiceName = aws_ecs_service.my_service.name
