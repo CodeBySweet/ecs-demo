@@ -37,11 +37,11 @@ jobs:
     steps:
     # Step 1: Checkout repository
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     # Step 2: Configure AWS credentials
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -49,7 +49,7 @@ jobs:
 
     # Step 3: Cache Terraform plugins
     - name: Cache Terraform plugins
-      uses: actions/cache@v3
+      uses: actions/cache@v4
       id: tf-cache
       with:
         path: |
@@ -59,7 +59,7 @@ jobs:
 
     # Step 4: Setup Terraform
     - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
+      uses: hashicorp/setup-terraform@v3
       with:
         terraform_version: ${{ env.TF_VERSION }}
         terraform_wrapper: false
@@ -125,11 +125,11 @@ jobs:
     steps:
     # Step 1: Checkout repository
     - name: Checkout repository
-      uses: actions/checkout@v3
+      uses: actions/checkout@v4
 
     # Step 2: Configure AWS credentials
     - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
+      uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -145,12 +145,12 @@ jobs:
     # Step 4: Login to Amazon ECR
     - name: Login to Amazon ECR
       id: login-ecr
-      uses: aws-actions/amazon-ecr-login@v1
+      uses: aws-actions/amazon-ecr-login@v2
 
     # Step 5: Docker Metadata Action
     - name: Docker Metadata Action
       id: meta
-      uses: docker/metadata-action@v4
+      uses: docker/metadata-action@v5
       with:
         images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
         tags: |
@@ -159,7 +159,7 @@ jobs:
     # Step 6: Set up Docker Buildx
     - name: Set up Docker Buildx
       id: buildx
-      uses: docker/setup-buildx-action@v2
+      uses: docker/setup-buildx-action@v3
       with:
         driver-opts: |
           image=moby/buildkit:latest
@@ -167,7 +167,7 @@ jobs:
     # Step 7: Build and Push with Buildx
     - name: Build and Push with Buildx
       id: build-push
-      uses: docker/build-push-action@v4
+      uses: docker/build-push-action@v5
       with:
         context: .
         file: ${{ env.DOCKERFILE_PATH }}
@@ -187,7 +187,7 @@ jobs:
     # Step 9: Scan for Critical vulnerabilities
     - name: Scan for Critical vulnerabilities
       id: trivy-scan
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.19
       with:
         image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
         format: 'json'
@@ -201,7 +201,7 @@ jobs:
     # Step 10: Scan for High vulnerabilities (warning only)
     - name: Scan for High vulnerabilities
       if: always()
-      uses: aquasecurity/trivy-action@master
+      uses: aquasecurity/trivy-action@0.19
       with:
         image-ref: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
         format: 'json'
@@ -214,7 +214,7 @@ jobs:
     # Step 11: Upload Trivy results
     - name: Upload Trivy results
       if: always()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: trivy-scan-results
         path: trivy-results.json
