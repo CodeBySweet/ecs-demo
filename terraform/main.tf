@@ -81,7 +81,7 @@ locals {
   security_groups   = [aws_security_group.my_sg.id]
   app_image_url     = "${aws_ecr_repository.my_repo.repository_url}:latest"
   grafana_image_url = "grafana/grafana:latest"
-  my_app_dns_name   = "${aws_ecs_service.my_service.name}.${aws_ecs_service.my_service.cluster}.local"
+  # my_app_dns_name   = "${aws_ecs_service.my_service.name}.${aws_ecs_service.my_service.cluster}.local"
 }
 
 # Your secret name in Secrets Manager
@@ -97,52 +97,52 @@ locals {
   account_id = jsondecode(data.aws_secretsmanager_secret_version.account_id.secret_string)["account_id"]
 }
 
-# Create an ECS task definition for the application
-resource "aws_ecs_task_definition" "my_task" {
-  family                   = "my-app-task"
-  network_mode             = "awsvpc"
-  requires_compatibilities = ["FARGATE"]
-  cpu                      = "1024"
-  memory                   = "4096"
-  execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
-  task_role_arn            = aws_iam_role.ecs_task_role.arn
+# # Create an ECS task definition for the application
+# resource "aws_ecs_task_definition" "my_task" {
+#   family                   = "my-app-task"
+#   network_mode             = "awsvpc"
+#   requires_compatibilities = ["FARGATE"]
+#   cpu                      = "1024"
+#   memory                   = "4096"
+#   execution_role_arn       = aws_iam_role.ecs_task_execution_role.arn
+#   task_role_arn            = aws_iam_role.ecs_task_role.arn
 
-  container_definitions = jsonencode([
-    {
-      name      = "my-app-container"
-      image     = "${local.account_id}.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
-      cpu       = 1024
-      memory    = 4096
-      essential = true
+#   container_definitions = jsonencode([
+#     {
+#       name      = "my-app-container"
+#       image     = "${local.account_id}.dkr.ecr.us-east-1.amazonaws.com/my-app-repo:latest"
+#       cpu       = 1024
+#       memory    = 4096
+#       essential = true
 
-      portMappings = [
-        {
-          containerPort = 5000 # Flask app endpoint
-          hostPort      = 5000
-          protocol      = "tcp"
-        }
-      ]
+#       portMappings = [
+#         {
+#           containerPort = 5000 # Flask app endpoint
+#           hostPort      = 5000
+#           protocol      = "tcp"
+#         }
+#       ]
 
-      logConfiguration = {
-        logDriver = "awslogs"
-        options = {
-          awslogs-group         = aws_cloudwatch_log_group.my_app_log_group.name
-          awslogs-region        = "us-east-1"
-          awslogs-stream-prefix = "ecs"
-        }
-      }
+#       logConfiguration = {
+#         logDriver = "awslogs"
+#         options = {
+#           awslogs-group         = aws_cloudwatch_log_group.my_app_log_group.name
+#           awslogs-region        = "us-east-1"
+#           awslogs-stream-prefix = "ecs"
+#         }
+#       }
 
-      # Health check configuration
-      healthCheck = {
-        command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
-        interval    = 15
-        retries     = 5
-        startPeriod = 180
-        timeout     = 10
-      }
-    }
-  ])
-}
+#       # Health check configuration
+#       healthCheck = {
+#         command     = ["CMD-SHELL", "curl -f --max-time 2 http://localhost:5000/health || exit 1"]
+#         interval    = 15
+#         retries     = 5
+#         startPeriod = 180
+#         timeout     = 10
+#       }
+#     }
+#   ])
+# }
 
 
 # Create an ECS cluster with Container Insights enabled
@@ -230,108 +230,108 @@ resource "aws_lb_listener" "http" {
   }
 }
 
-# Create an ECS service for the application
-resource "aws_ecs_service" "my_service" {
-  name            = "my-app-service"
-  cluster         = aws_ecs_cluster.my_cluster.id
-  task_definition = aws_ecs_task_definition.my_task.arn
-  desired_count   = 2
-  launch_type     = "FARGATE"
+# # Create an ECS service for the application
+# resource "aws_ecs_service" "my_service" {
+#   name            = "my-app-service"
+#   cluster         = aws_ecs_cluster.my_cluster.id
+#   task_definition = aws_ecs_task_definition.my_task.arn
+#   desired_count   = 2
+#   launch_type     = "FARGATE"
 
-  network_configuration {
-    subnets          = local.subnets
-    security_groups  = local.security_groups
-    assign_public_ip = true
-  }
+#   network_configuration {
+#     subnets          = local.subnets
+#     security_groups  = local.security_groups
+#     assign_public_ip = true
+#   }
 
-  load_balancer {
-    target_group_arn = aws_lb_target_group.app.arn
-    container_name   = "my-app-container"
-    container_port   = 5000
-  }
+#   load_balancer {
+#     target_group_arn = aws_lb_target_group.app.arn
+#     container_name   = "my-app-container"
+#     container_port   = 5000
+#   }
 
-  service_registries {
-    registry_arn = aws_service_discovery_service.my_app.arn
-  }
+#   service_registries {
+#     registry_arn = aws_service_discovery_service.my_app.arn
+#   }
 
-  depends_on = [aws_lb_listener.http]
-}
+#   depends_on = [aws_lb_listener.http]
+# }
 
 # Output ALB DNS name
 output "alb_dns_name" {
   value = aws_lb.app.dns_name
 }
 
-resource "local_file" "task_definition" {
-  filename = "${path.root}/task-definition.json"
-  content = jsonencode({
-    family                  = aws_ecs_task_definition.my_task.family
-    executionRoleArn        = aws_ecs_task_definition.my_task.execution_role_arn
-    taskRoleArn             = aws_ecs_task_definition.my_task.task_role_arn
-    networkMode             = aws_ecs_task_definition.my_task.network_mode
-    requiresCompatibilities = aws_ecs_task_definition.my_task.requires_compatibilities
-    cpu                     = aws_ecs_task_definition.my_task.cpu
-    memory                  = aws_ecs_task_definition.my_task.memory
-    containerDefinitions    = jsondecode(aws_ecs_task_definition.my_task.container_definitions)
-  })
-}
+# resource "local_file" "task_definition" {
+#   filename = "${path.root}/task-definition.json"
+#   content = jsonencode({
+#     family                  = aws_ecs_task_definition.my_task.family
+#     executionRoleArn        = aws_ecs_task_definition.my_task.execution_role_arn
+#     taskRoleArn             = aws_ecs_task_definition.my_task.task_role_arn
+#     networkMode             = aws_ecs_task_definition.my_task.network_mode
+#     requiresCompatibilities = aws_ecs_task_definition.my_task.requires_compatibilities
+#     cpu                     = aws_ecs_task_definition.my_task.cpu
+#     memory                  = aws_ecs_task_definition.my_task.memory
+#     containerDefinitions    = jsondecode(aws_ecs_task_definition.my_task.container_definitions)
+#   })
+# }
 
 
-output "container_definitions" {
-  description = "The container definitions for the ECS task"
-  value       = aws_ecs_task_definition.my_task.container_definitions
-  sensitive   = true
-}
+# output "container_definitions" {
+#   description = "The container definitions for the ECS task"
+#   value       = aws_ecs_task_definition.my_task.container_definitions
+#   sensitive   = true
+# }
 
-# CloudWatch Alarm for High CPU Utilization
-resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
-  alarm_name          = "HighCPUUtilization"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = 1
-  metric_name         = "CPUUtilization"
-  namespace           = "AWS/ECS"
-  period              = 300
-  statistic           = "Average"
-  threshold           = 80
-  alarm_actions       = ["arn:aws:sns:us-east-1:${local.account_id}:my-sns-topic"]
-  dimensions = {
-    ClusterName = aws_ecs_cluster.my_cluster.name
-    ServiceName = aws_ecs_service.my_service.name
-  }
-}
+# # CloudWatch Alarm for High CPU Utilization
+# resource "aws_cloudwatch_metric_alarm" "high_cpu_utilization" {
+#   alarm_name          = "HighCPUUtilization"
+#   comparison_operator = "GreaterThanThreshold"
+#   evaluation_periods  = 1
+#   metric_name         = "CPUUtilization"
+#   namespace           = "AWS/ECS"
+#   period              = 300
+#   statistic           = "Average"
+#   threshold           = 80
+#   alarm_actions       = ["arn:aws:sns:us-east-1:${local.account_id}:my-sns-topic"]
+#   dimensions = {
+#     ClusterName = aws_ecs_cluster.my_cluster.name
+#     ServiceName = aws_ecs_service.my_service.name
+#   }
+# }
 
-# CloudWatch Dashboard for ECS CPU Utilization
-resource "aws_cloudwatch_dashboard" "ecs_dashboard" {
-  dashboard_name = "ecs-cpu-dashboard"
+# # CloudWatch Dashboard for ECS CPU Utilization
+# resource "aws_cloudwatch_dashboard" "ecs_dashboard" {
+#   dashboard_name = "ecs-cpu-dashboard"
 
-  dashboard_body = jsonencode({
-    widgets = [
-      {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
-        properties = {
-          metrics = [
-            [
-              "AWS/ECS",
-              "CPUUtilization",
-              "ServiceName",
-              aws_ecs_service.my_service.name,
-              "ClusterName",
-              aws_ecs_cluster.my_cluster.name
-            ]
-          ]
-          period = 300
-          stat   = "Average"
-          region = "us-east-1"
-          title  = "ECS CPU Utilization for my-app-service"
-        }
-      }
-    ]
-  })
-}
+#   dashboard_body = jsonencode({
+#     widgets = [
+#       {
+#         type   = "metric"
+#         x      = 0
+#         y      = 0
+#         width  = 12
+#         height = 6
+#         properties = {
+#           metrics = [
+#             [
+#               "AWS/ECS",
+#               "CPUUtilization",
+#               "ServiceName",
+#               aws_ecs_service.my_service.name,
+#               "ClusterName",
+#               aws_ecs_cluster.my_cluster.name
+#             ]
+#           ]
+#           period = 300
+#           stat   = "Average"
+#           region = "us-east-1"
+#           title  = "ECS CPU Utilization for my-app-service"
+#         }
+#       }
+#     ]
+#   })
+# }
 
 # Create the CloudWatch Logs log group for the application
 resource "aws_cloudwatch_log_group" "my_app_log_group" {

@@ -1,0 +1,243 @@
+name: ECS Cluster CI/CD Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      terraform_action:
+        description: 'Select Terraform action to execute'
+        required: true
+        type: choice
+        options:
+          - plan
+          - apply
+          - destroy
+
+env:
+  AWS_REGION: "us-east-1"
+  TF_VERSION: "1.5.7"
+  ECR_REPOSITORY: "my-app-repo"
+  ECS_CLUSTER: "my-app-cluster"
+  ECS_SERVICE: "my-app-service"
+  DOCKERFILE_PATH: "./Dockerfile"
+  TF_WORKING_DIR: "."
+  IMAGE_TAG: "latest"
+
+jobs:
+  terraform:
+    name: Terraform Operations
+    runs-on: ubuntu-latest
+    environment: production
+    outputs:
+      operation_status: ${{ steps.set-status.outputs.status }}
+      operation_type: ${{ github.event.inputs.terraform_action }}
+      ecr_repository_url: ${{ steps.set-outputs.outputs.ecr_repository_url || 'none' }}
+      ecs_task_execution_role_arn: ${{ steps.set-outputs.outputs.ecs_task_execution_role_arn || 'none' }}
+      ecs_task_role_arn: ${{ steps.set-outputs.outputs.ecs_task_role_arn || 'none' }}
+
+    steps:
+    # Step 1: Checkout repository
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Step 2: Configure AWS credentials
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Step 3: Cache Terraform plugins
+    - name: Cache Terraform plugins
+      uses: actions/cache@v4
+      id: tf-cache
+      with:
+        path: |
+          ${{ env.TF_WORKING_DIR }}/.terraform
+          ${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl
+        key: tf-${{ hashFiles('${{ env.TF_WORKING_DIR }}/.terraform.lock.hcl') }}
+
+    # Step 4: Setup Terraform
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ${{ env.TF_VERSION }}
+        terraform_wrapper: false
+
+    # Step 5: Terraform Format Check
+    - name: Terraform Format Check
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform fmt -check -diff -recursive
+
+    # Step 6: Terraform Init
+    - name: Terraform Init
+      id: init
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform init
+
+    # Step 7: Terraform Validate
+    - name: Terraform Validate
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform validate
+
+    # Step 8: Fixed Terraform Plan
+    - name: Terraform Plan
+      if: github.event.inputs.terraform_action == 'plan'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
+        terraform plan -input=false -no-color -detailed-exitcode || \
+        if [ $? -eq 2 ]; then 
+          echo "Terraform plan requires changes (exit code 2)" 
+          exit 0
+        else 
+          exit $?
+        fi
+
+    # Step 9: Terraform Apply
+    - name: Terraform Apply
+      if: github.event.inputs.terraform_action == 'apply'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform apply -input=false -auto-approve
+
+    # Step 10: Terraform Destroy
+    - name: Terraform Destroy
+      if: github.event.inputs.terraform_action == 'destroy'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: terraform destroy -input=false -auto-approve
+
+    # Step 11: Set Status
+    - name: Set Status
+      id: set-status
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: echo "status=success" >> $GITHUB_OUTPUT
+
+    # Step 12: Capture Terraform Outputs
+    - name: Capture Terraform Outputs
+      id: set-outputs
+      if: github.event.inputs.terraform_action == 'apply'
+      working-directory: ${{ env.TF_WORKING_DIR }}
+      run: |
+        echo "ecr_repository_url=$(terraform output -raw ecr_repository_url)" >> $GITHUB_OUTPUT
+        echo "ecs_task_execution_role_arn=$(terraform output -raw ecs_task_execution_role_arn)" >> $GITHUB_OUTPUT
+        echo "ecs_task_role_arn=$(terraform output -raw ecs_task_role_arn)" >> $GITHUB_OUTPUT
+
+  build-scan-deploy:
+    name: Build, Scan, Deploy
+    needs: terraform
+    runs-on: ubuntu-latest
+    if: |
+      github.event.inputs.terraform_action == 'apply' &&
+      needs.terraform.outputs.operation_status == 'success'
+
+    steps:
+    # Step 1: Checkout repository
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    # Step 2: Configure AWS credentials
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+
+    # Step 3: Verify ECR Repository
+    - name: Verify ECR Repository
+      run: |
+        aws ecr describe-repositories \
+          --repository-names $ECR_REPOSITORY \
+          --region $AWS_REGION
+
+    # Step 4: Login to Amazon ECR
+    - name: Login to Amazon ECR
+      id: login-ecr
+      uses: aws-actions/amazon-ecr-login@v2
+
+    # Step 5: Docker Metadata Action
+    - name: Docker Metadata Action
+      id: meta
+      uses: docker/metadata-action@v5
+      with:
+        images: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
+        tags: |
+          type=raw,value=${{ env.IMAGE_TAG }},enable=${{ true }}
+
+    # Step 6: Set up Docker Buildx
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+      with:
+        driver-opts: |
+          image=moby/buildkit:latest
+
+    # Step 7: Build and Push with Buildx
+    - name: Build and Push with Buildx
+      id: build-push
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: ${{ env.DOCKERFILE_PATH }}
+        platforms: linux/amd64
+        tags: ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+        labels: ${{ steps.meta.outputs.labels }}
+        push: true
+        cache-from: type=gha
+        cache-to: type=gha,mode=max,compression=zstd
+        build-args: |
+          BUILDKIT_INLINE_CACHE=1
+
+ # Step 8: Create Trivy cache directory
+    - name: Create Trivy cache directory
+      run: mkdir -p /tmp/trivy-cache
+
+    # Step 9: Install Trivy
+    - name: Install Trivy
+      run: |
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin v0.49.1
+
+    # Step 10: Scan for Critical vulnerabilities
+    - name: Scan for Critical vulnerabilities
+      id: trivy-critical-scan
+      run: |
+        trivy image \
+          --severity CRITICAL \
+          --ignore-unfixed \
+          --exit-code 1 \
+          --format table \
+          --scanners vuln \
+          --cache-dir /tmp/trivy-cache \
+          --timeout 5m \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+    # Step 11: Scan for High vulnerabilities (warning only)
+    - name: Scan for High vulnerabilities
+      if: always()
+      run: |
+        trivy image \
+          --severity HIGH \
+          --ignore-unfixed \
+          --exit-code 0 \
+          --format json \
+          --output trivy-results.json \
+          --scanners vuln \
+          --cache-dir /tmp/trivy-cache \
+          --timeout 5m \
+          ${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
+
+    # Step 12: Force New Deployment and Verify
+    - name: Verify Deployment
+      if: steps.trivy-critical-scan.outcome == 'success'
+      run: |
+        echo "Forcing new ECS deployment..."
+        aws ecs update-service \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --service ${{ env.ECS_SERVICE }} \
+          --force-new-deployment \
+          --region ${{ env.AWS_REGION }}
+
+        echo "Waiting for deployment to stabilize..."
+        aws ecs wait services-stable \
+          --cluster ${{ env.ECS_CLUSTER }} \
+          --services ${{ env.ECS_SERVICE }} \
+          --region ${{ env.AWS_REGION }}
