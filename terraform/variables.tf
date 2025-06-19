@@ -7,7 +7,7 @@ variable "region" {
 variable "sg_ports" {
   description = "Security Group's Ports"
   type        = list(number)
-  default     = [80, 443, 5000, 3000]
+  default     = [80, 443, 5000, 3000, 3001, 3002, 3003]
 }
 
 variable "grafana_anonymous_enabled" {
